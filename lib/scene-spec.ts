@@ -331,7 +331,27 @@ export function normalizeSceneSpec(spec: SceneSpec): SceneSpec {
   const characters = spec.characters.map((c, i) => ({ id: c.id, x: c.x ?? defaultX[i], accent: c.accent }));
   const shots = [...spec.shots].sort((a, b) => a.start - b.start);
   const beats = [...spec.beats].sort((a, b) => a.start - b.start);
-  const caps = deriveCaps(beats);
+  // Kerapian (Bug 3): toast yang tumpang tindih dengan beat glitch atau beat
+  // bermonitor (scoreboard/typewriter/dialogue bermonitor) digeser ke akhir
+  // beat penghalang, supaya banner toast tidak menutupi teks beat / isi
+  // monitor pada detik yang sama. Bila tidak ada ruang sampai akhir durasi,
+  // toast dihapus (lebih baik hilang daripada menumpuk).
+  const blockers = beats.filter((b) => b.type === "glitch" || (b.type !== "toast" && b.monitor));
+  const tidyBeats: SceneBeat[] = [];
+  for (const b of beats) {
+    if (b.type !== "toast") { tidyBeats.push(b); continue; }
+    const len = b.end - b.start;
+    let start = b.start;
+    for (const blk of blockers) {
+      if (start < blk.end && blk.start < start + len) start = blk.end;
+    }
+    for (const t2 of tidyBeats) {
+      if (t2.type === "toast" && start < t2.end && t2.start < start + len) start = t2.end;
+    }
+    if (start + len <= spec.duration + 1e-9) tidyBeats.push({ ...b, start, end: start + len });
+  }
+  tidyBeats.sort((a, b) => a.start - b.start);
+  const caps = deriveCaps(tidyBeats);
   return {
     id: spec.id?.trim() || `scene-${Date.now()}`,
     title: spec.title.trim(),
@@ -339,7 +359,7 @@ export function normalizeSceneSpec(spec: SceneSpec): SceneSpec {
     palette: spec.palette,
     characters,
     shots,
-    beats,
+    beats: tidyBeats,
     caps,
     vo: spec.vo && spec.vo.length === caps.length ? spec.vo.map((v) => v.trim()) : caps.map((c) => c.text),
     notes: spec.notes?.trim() || undefined,

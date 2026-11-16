@@ -29,6 +29,8 @@ Instruksi revisi:
   ke durasi (LEN) template baru — jangan ada caption yang keluar dari durasi baru.
   Kalau tidak diminta ganti template, templateId HARUS tetap "${currentSpec.templateId}".
 - Kamu juga boleh mengubah title bila diminta / bila revisi mengubah cerita.
+  Title tampil sebagai judul LAYAR di dalam video (#title), bukan cuma judul
+  file — buat singkat dan jelas supaya muat di layar.
 - Kembalikan SELALU spec LENGKAP (semua caption, bukan hanya yang berubah).`
     : `MODE BUAT BARU — buat resep video baru dari nol dari ide pengguna.`;
   return `${SKILL_SUMMARY}

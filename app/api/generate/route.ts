@@ -9,10 +9,10 @@ import { buildSystemPrompt, buildUserPrompt } from "@/lib/skill";
 
 type Provider = { baseUrl: string; model: string; apiKey: string };
 
-// POST /api/generate { prompt, templateId?, provider, currentSpec? }
-// - Tanpa currentSpec: MODE BUAT BARU.
-// - Dengan currentSpec: MODE REVISI — AI menerima spec aktif sebagai konteks dan
-//   wajib mengembalikan spec LENGKAP yang sudah diperbarui (bukan patch).
+// POST /api/generate { prompt, templateId?, provider, currentSpec }
+// HANYA MODE REVISI: wajib membawa currentSpec (entri spec yang sedang
+// dibuka). Video BARU hanya dibuat lewat jalur Scene (/api/generate-scene-stream);
+// jalur spec lama tidak lagi membuat video baru. Tanpa currentSpec -> 400.
 // API key hanya diteruskan ke provider pengguna, tidak disimpan / di-log.
 export async function POST(req: Request) {
   let body: { prompt?: string; templateId?: string; provider?: Provider; currentSpec?: Spec };
@@ -26,7 +26,13 @@ export async function POST(req: Request) {
   if (!prompt) return NextResponse.json({ error: "Prompt tidak boleh kosong." }, { status: 400 });
 
   const currentSpec = body.currentSpec ?? null;
-  if (currentSpec) {
+  if (!currentSpec) {
+    return NextResponse.json(
+      { error: "Buat video baru hanya lewat Scene. /api/generate hanya merevisi entri spec yang sudah ada (kirim currentSpec)." },
+      { status: 400 },
+    );
+  }
+  {
     const curErrors = validateSpec(currentSpec);
     if (curErrors.length > 0) {
       return NextResponse.json({ error: "Spec saat ini tidak valid, tidak bisa direvisi.", validationErrors: curErrors }, { status: 422 });

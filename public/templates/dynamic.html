@@ -10,7 +10,7 @@
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#141413;--fg:#fff}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
 #stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);overflow:hidden;background:#000;--u:4px}canvas{display:block;width:100%;height:100%}
-#title{position:absolute;left:0;right:0;top:20%;text-align:center;font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;color:#faf9f5;font-weight:800;font-size:calc(var(--u)*9);letter-spacing:-.02em;text-shadow:0 4px 24px #000a;transition:opacity .6s;pointer-events:none}
+#title{position:absolute;left:0;right:0;top:4%;padding:0 4%;box-sizing:border-box;text-align:center;font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;color:#faf9f5;font-weight:800;font-size:calc(var(--u)*9);line-height:1.15;letter-spacing:-.02em;text-shadow:0 4px 24px #000a;transition:opacity .6s;pointer-events:none}
 #title small{display:block;font-family:system-ui,sans-serif;color:#d97757;font-size:.28em;font-weight:500;letter-spacing:1px;margin-top:6px}.st{display:block;margin:0 auto 6px;width:calc(var(--u)*13);height:calc(var(--u)*13)}
 .bub{position:absolute;left:0;top:0;max-width:56%;box-sizing:border-box;padding:calc(var(--u)*2.2) calc(var(--u)*3.4);border-radius:calc(var(--u)*4);background:rgba(20,20,19,.94);color:#faf9f5;border:max(1px,calc(var(--u)*.2)) solid var(--ac,#faf9f5);font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;font-weight:700;font-size:calc(var(--u)*4.4);line-height:1.25;text-align:center;text-wrap:balance;opacity:0;transition:none;will-change:transform,opacity;pointer-events:none}
 .bub.on{opacity:1}
@@ -54,6 +54,7 @@ button{background:#d97757;color:#fff;border:0;border-radius:20px;padding:8px 16p
 /* dynamic-scene overlays */
 #count{position:absolute;left:0;right:0;top:36%;text-align:center;font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;font-weight:800;font-size:calc(var(--u)*30);color:#fff;text-shadow:0 4px 30px #000c;display:none;pointer-events:none;z-index:4}
 #toast{position:absolute;left:50%;top:calc(var(--u)*9);transform:translateX(-50%);background:rgba(20,20,19,.94);border:1px solid #faf9f5;color:#faf9f5;padding:calc(var(--u)*2) calc(var(--u)*4);border-radius:calc(var(--u)*6);font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;font-weight:700;font-size:calc(var(--u)*3.6);display:none;z-index:4;pointer-events:none;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis}
+#glitch{position:absolute;left:0;right:0;max-width:92%;margin-left:auto;margin-right:auto;box-sizing:border-box;top:42%;transform:translateY(-50%);text-align:center;font-family:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;font-weight:800;font-size:calc(var(--u)*7);line-height:1.2;color:#fff;background:rgba(20,20,19,.88);border:2px solid #d97757;border-radius:calc(var(--u)*3);padding:calc(var(--u)*2.5) calc(var(--u)*5);text-shadow:0 2px 12px #000;display:none;z-index:4;pointer-events:none}
 #zzz{position:absolute;font-weight:800;color:#bfe3ff;font-size:calc(var(--u)*5);text-shadow:0 2px 8px #000a;display:none;z-index:4;pointer-events:none}
 #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:3}
 #cbf{display:none}
@@ -63,7 +64,7 @@ button{background:#d97757;color:#fff;border:0;border-radius:20px;padding:8px 16p
 <body>
 <div id="stage"><div id="go"><button id="gob" aria-label="Putar"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button><small id="gos">Voice over bahasa Indonesia</small><span id="gdur"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg><i id="gdt">0:00</i></span></div><div id="title"><svg class="st"></svg>Scene Dinamis<small>Claudeku Studio</small></div>
 <div id="wm">@hanzvibes</div><div class="bub" id="bC"></div><div class="bub" id="bD"></div><div class="bub" id="bG"></div>
-<div id="count"></div><div id="toast"></div><div id="zzz">Zzz</div><div id="flash"></div><div id="cbf"></div>
+<div id="count"></div><div id="toast"></div><div id="glitch"></div><div id="zzz">Zzz</div><div id="flash"></div><div id="cbf"></div>
 <iframe id="crun" sandbox="allow-scripts" title="custom beat runner"></iframe>
 <div id="gui"><div id="gtop" class="gb"><button id="gbk" class="gb" aria-label="Kembali"><svg viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg></button><div id="gtt"><b id="gt1">Video</b><span id="gt2"></span></div></div><button id="gcc" class="gb" aria-label="Putar atau jeda"></button><div id="gbot" class="gb"><div id="gsk"><span id="gtc">0:00</span><div id="gtr" class="gb"><div id="gfl"></div><div id="gkn"></div></div><span id="gtd">0:00</span></div><div id="gro"><button id="snd" class="gb" aria-label="Suara"></button><div id="gmid"><button id="grw" class="gb" aria-label="Mundur 5 detik"></button><button id="gff" class="gb" aria-label="Maju 5 detik"></button></div><button id="pl" class="gb" aria-label="Ulang"></button></div></div></div><div id="end"><svg class="st"></svg>Menurut kamu, siapa<br>yang menang?<small>by @hanzvibes</small></div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -149,6 +150,39 @@ const STAR_INNER = [0, 1, 2, 3, 4, 5, 6, 7].map(i => `<rect x="-6" y="-46" width
 document.querySelectorAll('.st').forEach(s => { s.setAttribute('viewBox', '-50 -50 100 100'); s.innerHTML = STAR_INNER; });
 const ttl = document.getElementById('title');
 ttl.innerHTML = '<svg class="st" viewBox="-50 -50 100 100">' + STAR_INNER + '</svg>' + escHtml(SPEC.title || 'Scene Dinamis') + '<small>Claudeku Studio</small>';
+/* Judul auto-fit (Bug 3): kecilkan font sampai teks muat <=2 baris dalam 92%
+   lebar stage DAN blok judul (bintang + teks + sub) <=15% tinggi stage,
+   supaya tidak pernah menutupi papan skor di dinding (tepi atas papan
+   ~21% tinggi stage pada kamera awal). Dipanggil tiap judul di-set
+   (init via layout(), live-update) dan tiap layout/resize. */
+const fitTitleCv = document.createElement('canvas');
+function fitTitle() {
+  try {
+    const maxW = stage.clientWidth * .92, maxH = stage.clientHeight * .15;
+    const text = Array.from(ttl.childNodes).filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').replace(/\s+/g, ' ').trim() || 'Scene';
+    const cs = getComputedStyle(ttl);
+    const g = fitTitleCv.getContext('2d');
+    const base = SW / 100 * 9;
+    let fs = base;
+    for (let i = 0; i < 40; i++) {
+      g.font = cs.fontWeight + ' ' + fs.toFixed(1) + 'px ' + cs.fontFamily;
+      const lines = Math.max(1, Math.ceil(g.measureText(text).width / maxW));
+      const blockH = fs * (1.444 + 1.15 * lines + .28) + 6;
+      if (lines <= 2 && blockH <= maxH) break;
+      fs *= .92;
+      if (fs < 12) { fs = 12; break }
+    }
+    const applyFs = () => {
+      ttl.style.fontSize = fs.toFixed(1) + 'px';
+      const star = ttl.querySelector('.st');
+      if (star) { const s = (fs * 13 / 9).toFixed(1); star.style.width = s + 'px'; star.style.height = s + 'px' }
+    };
+    applyFs();
+    /* Verifikasi DOM: bila tinggi aktual masih melewati batas (font web
+       lebih lebar dari taksiran canvas), kecilkan lagi bertahap. */
+    for (let i = 0; i < 6 && ttl.scrollHeight > maxH + 8; i++) { fs *= .9; applyFs() }
+  } catch (e) { /* judul tetap tampil ukuran default bila fit gagal */ }
+}
 const endEl = document.getElementById('end');
 endEl.innerHTML = '<svg class="st" viewBox="-50 -50 100 100">' + STAR_INNER + '</svg>' + escHtml(SPEC.title || 'Scene Dinamis') + '<small>by @hanzvibes</small>';
 
@@ -415,10 +449,10 @@ comp.addPass(new THREE.RenderPass(S, C));
 const bokeh = new THREE.BokehPass(S, C, { focus: 4, aperture: .007, maxblur: .012, width: 360, height: 640 }); comp.addPass(bokeh); { const br = bokeh.render.bind(bokeh); bokeh.render = function (...a) { const v = parts.visible; parts.visible = false; br(...a); parts.visible = v } }
 comp.addPass(new THREE.UnrealBloomPass(new THREE.Vector2(360, 640), .14, .4, .9));
 const ghost = new THREE.AfterimagePass(.3); comp.addPass(ghost);
-const CINE = { uniforms: { tDiffuse: { value: null }, time: { value: 0 }, fade: { value: 1 }, gl: { value: 0 } }, vertexShader: `varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`, fragmentShader: `uniform sampler2D tDiffuse;uniform float time,fade,gl;varying vec2 vUv;float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233))+time)*43758.5453);}void main(){vec2 c=vUv-.5;float d=dot(c,c);vec2 o=c*d*.012;vec2 guv=vUv+vec2((h(vUv*vec2(540.,960.))-.5)*gl*.06,0.);vec3 col=vec3(texture2D(tDiffuse,guv+o).r,texture2D(tDiffuse,guv).g,texture2D(tDiffuse,guv-o).b);float l=dot(col,vec3(.299,.587,.114));col=mix(col*vec3(.94,.97,1.03),col*vec3(1.08,1.,.9),smoothstep(.15,.7,l));col=(col-.5)*1.12+.5;col=col/(1.+col*.18)*.92;col*=1.-smoothstep(.12,.62,d)*.7;col+=(h(vUv*vec2(540.,960.))-.5)*(.012+gl*.05);col*=fade;gl_FragColor=vec4(col,1.);}` };
+const CINE = { uniforms: { tDiffuse: { value: null }, time: { value: 0 }, fade: { value: 1 }, gl: { value: 0 } }, vertexShader: `varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`, fragmentShader: `uniform sampler2D tDiffuse;uniform float time,fade,gl;varying vec2 vUv;float h(vec2 p){return fract(sin(dot(p,vec2(12.9898,78.233))+time)*43758.5453);}void main(){vec2 c=vUv-.5;float d=dot(c,c);vec2 o=c*d*.012;vec2 guv=vUv+vec2((h(vUv*vec2(540.,960.))-.5)*gl*.03,0.);vec3 col=vec3(texture2D(tDiffuse,guv+o).r,texture2D(tDiffuse,guv).g,texture2D(tDiffuse,guv-o).b);float l=dot(col,vec3(.299,.587,.114));col=mix(col*vec3(.94,.97,1.03),col*vec3(1.08,1.,.9),smoothstep(.15,.7,l));col=(col-.5)*1.12+.5;col=col/(1.+col*.18)*.92;col*=1.-smoothstep(.12,.62,d)*.7;col+=(h(vUv*vec2(540.,960.))-.5)*(.012+gl*.02);col*=fade;gl_FragColor=vec4(col,1.);}` };
 const fxaa = new THREE.ShaderPass(THREE.FXAAShader); comp.addPass(fxaa);
 const cine = new THREE.ShaderPass(CINE); comp.addPass(cine);
-function layout() { const h = Math.min(innerHeight, innerWidth * 16 / 9), w = h * 9 / 16; SW = Math.round(w); SH = Math.round(h); stage.style.width = SW + 'px'; stage.style.height = SH + 'px'; stage.style.setProperty('--u', SW / 100 + 'px'); R.setSize(SW, SH); comp.setPixelRatio(R.getPixelRatio()); comp.setSize(SW, SH); const pr = R.getPixelRatio(); fxaa.material.uniforms['resolution'].value.set(1 / (SW * pr), 1 / (SH * pr)); fitFov() }
+function layout() { const h = Math.min(innerHeight, innerWidth * 16 / 9), w = h * 9 / 16; SW = Math.round(w); SH = Math.round(h); stage.style.width = SW + 'px'; stage.style.height = SH + 'px'; stage.style.setProperty('--u', SW / 100 + 'px'); R.setSize(SW, SH); comp.setPixelRatio(R.getPixelRatio()); comp.setSize(SW, SH); const pr = R.getPixelRatio(); fxaa.material.uniforms['resolution'].value.set(1 / (SW * pr), 1 / (SH * pr)); fitFov(); fitTitle() }
 
 /* ---- Waktu ter-warp (slow-mo): fungsi murni dari t ---- */
 function warpTime(t) {
@@ -447,13 +481,13 @@ function camBase(shot, t) {
   if (shot.from && shot.to) { pos = [shot.from[0] + (shot.to[0] - shot.from[0]) * p, shot.from[1] + (shot.to[1] - shot.from[1]) * p, shot.from[2] + (shot.to[2] - shot.from[2]) * p] }
   else if (shot.camera === 'orbit') { const a = p * Math.PI * 1.2 - .6; pos = [fx + Math.sin(a) * 4.2, 2.0, 2.2 + Math.cos(a) * 4.2] }
   else if (shot.camera === 'dolly') { pos = [fx * .4, 1.6, 8.6 - 3 * p]; fov = -14 * p }
-  else if (shot.camera === 'overhead') { pos = [0, 8.5, 2.0] }
+  else if (shot.camera === 'overhead') { pos = [0, 9.2, 3.6] } /* mundur + condong: papan skor utuh (Bug 3) */
   else if (shot.camera === 'closeup') { pos = [fx + .7, 1.55, 3.1]; fov = -4 }
   else if (shot.camera === 'twoshot') { const f2 = Math.min(NC - 1, f + 1), mx = (charX(f) + charX(f2)) / 2; pos = [mx, 1.6, 6.6] }
   else if (shot.camera === 'low') { pos = [fx, .45, 5.6] }
   else { pos = [fx * .45, 1.9, 7.8] }
   if (shot.lookAt) look = shot.lookAt.slice();
-  else if (shot.camera === 'overhead') look = [0, 0, 0];
+  else if (shot.camera === 'overhead') look = [0, 1.8, -0.8]; /* arahkan ke papan skor, bukan ke lantai */
   else if (shot.camera === 'low') look = [fx, 1.7, 0];
   else if (shot.camera === 'closeup') look = [fx, 1.15, 0];
   else look = [fx * .6, 1.0, 0];
@@ -596,6 +630,7 @@ function applyLiveSpec(partial) {
       const t = SPEC.title || 'Scene Dinamis';
       document.title = t;
       ttl.innerHTML = '<svg class="st" viewBox="-50 -50 100 100">' + STAR_INNER + '</svg>' + escHtml(t) + '<small>Claudeku Studio</small>';
+      fitTitle();
       endEl.innerHTML = '<svg class="st" viewBox="-50 -50 100 100">' + STAR_INNER + '</svg>' + escHtml(t) + '<small>by @hanzvibes</small>';
       const gt1 = document.getElementById('gt1'); if (gt1) gt1.textContent = t.slice(0, 40);
       const fmtT = Math.floor(LEN / 60) + ':' + String(Math.floor(LEN % 60)).padStart(2, '0');
@@ -623,7 +658,7 @@ let T = 0, paused = false, last = performance.now(), FDT = 1 / 60;
 const camP = new THREE.Vector3(0, 2.3, 8.4), camL = new THREE.Vector3(0, 1, 0), tp = new THREE.Vector3(), tl = new THREE.Vector3(), tv = new THREE.Vector3(), pv = new THREE.Vector3();
 const cl = (v, a, b) => Math.min(b, Math.max(a, v)), sm = x => x * x * (3 - 2 * x);
 const B = [document.getElementById('bC'), document.getElementById('bD'), document.getElementById('bG')], CC = ['#d97757', '#7b8cff', '#b794f6'];
-const countEl = document.getElementById('count'), toastEl = document.getElementById('toast'), zzzEl = document.getElementById('zzz'), flashEl = document.getElementById('flash');
+const countEl = document.getElementById('count'), toastEl = document.getElementById('toast'), glitchEl = document.getElementById('glitch'), zzzEl = document.getElementById('zzz'), flashEl = document.getElementById('flash');
 function scoresAt(t) {
   const sc = [55, 55, 55];
   for (const b of BEATS) {
@@ -702,6 +737,11 @@ function frame(t) {
   else if (toastOv && performance.now() < toastOv.until) toastTxt = toastOv.text;
   else if (toastBeat) toastTxt = toastBeat.text || '';
   if (toastTxt) { toastEl.style.display = 'block'; toastEl.textContent = toastTxt } else toastEl.style.display = 'none';
+  /* Teks beat glitch SELALU tampil jelas sebagai DOM di tengah layar
+     (pola #count/#toast) — tidak mengandalkan frame 3D yang ikut bergetar. */
+  const glBeat = activeBeats(t, 'glitch')[0];
+  if (glBeat) { const gt = (glBeat.text || 'GLITCH').trim(); if (glitchEl.textContent !== gt) glitchEl.textContent = gt; glitchEl.style.display = 'block' }
+  else glitchEl.style.display = 'none';
   if (performance.now() < flashUntil) { flashEl.style.background = flashColor; flashEl.style.opacity = String(.35 * (flashUntil - performance.now()) / 600) }
   else flashEl.style.opacity = '0';
   /* --- props: visible hanya selama beat yang menyebutnya (atau override custom) --- */
@@ -734,14 +774,16 @@ function frame(t) {
     else if (trans === 'zoom') { if (tIn < .6) fovDelta += 16 * (1 - tIn / .6) }
     else if (trans === 'glide') e = sm(cl(tIn / 1.5, 0, 1));
   }
-  if (activeBeats(t, 'glitch')[0]) glitchAmt = 1;
+  /* Glitch HALUS (Bug 3): dulu glitchAmt=1 + shake besar + noise/RGB split
+     penuh = layar jadi noise tak terbaca. Sekarang 0,35 + shake kecil. */
+  if (activeBeats(t, 'glitch')[0]) glitchAmt = 0.35;
   const cb0 = camBase(prev, prev.end - .01), cb1 = camBase(sh, t);
   tp.set(cb0.pos[0] + (cb1.pos[0] - cb0.pos[0]) * e, cb0.pos[1] + (cb1.pos[1] - cb0.pos[1]) * e, cb0.pos[2] + (cb1.pos[2] - cb0.pos[2]) * e);
   tl.set(cb0.look[0] + (cb1.look[0] - cb0.look[0]) * e, cb0.look[1] + (cb1.look[1] - cb0.look[1]) * e, cb0.look[2] + (cb1.look[2] - cb0.look[2]) * e);
   const sk = .008;
   C.position.copy(tp);
-  C.position.x += Math.sin(t * 1.7) * sk + Math.sin(t * 5.3) * sk * .4 + (glitchAmt ? (Math.random() - .5) * .18 : 0);
-  C.position.y += Math.sin(t * .8) * .02 + (glitchAmt ? (Math.random() - .5) * .12 : 0);
+  C.position.x += Math.sin(t * 1.7) * sk + Math.sin(t * 5.3) * sk * .4 + (glitchAmt ? (Math.random() - .5) * .06 : 0);
+  C.position.y += Math.sin(t * .8) * .02 + (glitchAmt ? (Math.random() - .5) * .04 : 0);
   C.position.z -= Math.sin(t * .35) * .08;
   C.lookAt(tl);
   C.fov = baseFov + cb1.fov + fovDelta; C.updateProjectionMatrix();

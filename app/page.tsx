@@ -6,13 +6,31 @@ import { CANNED_SPEC, cannedRevisionExample } from "@/lib/canned";
 import { CANNED_SCENE, cannedSceneRevision } from "@/lib/canned-scene";
 import type { SceneSpec } from "@/lib/scene-spec";
 import {
+  decideGenerate,
+  resolveActiveEntry,
+  updateIdForKind,
+  type GenerateDecision,
+  type GenerateMode,
+} from "@/lib/revision";
+import {
   loadMine,
   saveMineEntry,
   updateMineEntry,
   deleteMineEntry,
   newMineId,
+  mineFitsBudget,
+  MINE_QUOTA_MESSAGE,
   type MineEntry,
+  type MineKind,
 } from "@/lib/mine";
+import {
+  extractSkillLen,
+  extractSkillTitle,
+  retitleSkillHtml,
+  validateSkillHtml,
+  type SkillVideo,
+} from "@/lib/skill-validate";
+import { rewriteThreeCdnToLocal } from "@/lib/cdn-rewrite";
 import {
   loadProvider,
   saveProvider,
@@ -30,6 +48,14 @@ type StreamEvent =
   | { type: "partial"; scene: SceneSpec }
   | { type: "repaired"; attempt: number }
   | { type: "done"; scene: SceneSpec; html: string; previewHtml: string; repaired: boolean; attempts: number }
+  | { type: "error"; error: string; validationErrors?: string[] };
+
+/** Event SSE dari /api/generate-skill. */
+type SkillStreamEvent =
+  | { type: "token"; text: string }
+  | { type: "stage"; stage: string; text: string }
+  | { type: "repaired"; attempt: number }
+  | { type: "done"; title: string; html: string; previewHtml: string; duration: number; repaired: boolean; attempts: number; lintWarnings: string[]; lintVia: "python" | "ts" }
   | { type: "error"; error: string; validationErrors?: string[] };
 
 function fmt(t: number): string {
@@ -71,7 +97,10 @@ export default function StudioPage() {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [mode, setMode] = useState<"baru" | "revisi" | "scene">("revisi");
+  // Tiga mode prompt: dua jalur buat-baru (scene / skill) + revisi.
+  // Mode "Buat baru" lama (spec menempel template) DIHAPUS untuk video baru:
+  // /api/generate hanya merevisi entri spec yang sudah ada.
+  const [mode, setMode] = useState<GenerateMode>("scene");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -87,8 +116,30 @@ export default function StudioPage() {
   // --- Mesin scene (Hybrid Level 4) + Video Buatan Saya ---
   const [scene, setScene] = useState<SceneSpec | null>(null);
   const [prevScene, setPrevScene] = useState<SceneSpec | null>(null);
+  // --- Jalur Skill penuh: HTML template lengkap buatan AI ---
+  const [skill, setSkill] = useState<SkillVideo | null>(null);
+  const [prevSkill, setPrevSkill] = useState<SkillVideo | null>(null);
   const [mine, setMine] = useState<MineEntry[]>([]);
   const [activeMineId, setActiveMineId] = useState<string | null>(null);
+  // Ref yang SELALU mirror activeMineId (Bug 1): semua keputusan
+  // update-vs-baru dibaca dari REF ini (atau dari id eksplisit), BUKAN
+  // dari closure state yang bisa basi sesudah setActiveMineId + await.
+  const activeMineIdRef = useRef<string | null>(null);
+  const setActiveMine = useCallback((id: string | null) => {
+    activeMineIdRef.current = id;
+    setActiveMineId(id);
+  }, []);
+  // Bila perubahan templateId datang dari revisi/apply (AI ganti template),
+  // JANGAN muat ulang spec template asli — spec hasil revisi sudah benar.
+  // Tanpa flag ini, efek templateId menimpa spec revisi dengan spec asli
+  // template baru + membersihkan entri aktif (bug laten).
+  const templateChangeFromApplyRef = useRef(false);
+  // Token invalidasi loadTemplateSpec: setiap aksi pengguna yang mengubah
+  // konten (buka entri, ganti mode, apply/generate) menaikkan token — bila
+  // fetch template yang sedang berjalan resolve SESUDAH itu, hasilnya basi
+  // dan TIDAK BOLEH menimpa state baru. Tanpa ini, load mount (~5 dtk saat
+  // compile pertama) bisa menghapus entri yang baru dibuka pengguna.
+  const templateLoadTokenRef = useRef(0);
   // Preview lazy: iframe TIDAK di-load saat pertama buka — baru dimuat saat
   // pengguna memilih template / video buatan / menekan tombol muat. Lebih ringan.
   const [previewOn, setPreviewOn] = useState(false);
@@ -106,15 +157,22 @@ export default function StudioPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const streamTextRef = useRef<HTMLPreElement>(null);
   const lastPartialSceneRef = useRef<SceneSpec | null>(null);
+  // Jalur stream yang sedang berjalan (scene / skill) — dipakai cancelStream
+  // untuk membedakan draft scene (bisa disimpan) vs skill (HTML parsial
+  // tidak bisa disimpan, batalkan saja).
+  const streamKindRef = useRef<"scene" | "skill" | null>(null);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   const meta = getTemplate(templateId) ?? TEMPLATES[0];
-  // Saat scene aktif, durasi + judul mengikuti scene, bukan template.
-  const duration = scene ? scene.duration : meta.duration;
-  const previewTitle = scene?.title ?? spec?.title ?? meta.title;
+  // Saat scene/skill aktif, durasi + judul mengikuti konten itu, bukan template.
+  const duration = scene ? scene.duration : skill ? skill.duration : meta.duration;
+  const previewTitle = scene?.title ?? skill?.title ?? spec?.title ?? meta.title;
+  // Entri aktif (di-resolve dari daftar, untuk hint/label — bukan keputusan simpan).
+  const activeEntry = mine.find((e) => e.id === activeMineId) ?? null;
+  const hasActiveEntry = activeEntry !== null;
 
   // Muat provider + galeri Video Buatan Saya tersimpan (localStorage saja).
   useEffect(() => {
@@ -127,17 +185,25 @@ export default function StudioPage() {
   }, []);
 
   // Muat spec asli template terpilih dari server. Memilih template bawaan
-  // SELALU keluar dari mode scene (scene tersimpan tetap ada di galeri).
+  // SELALU menutup entri aktif + scene/skill dan kembali ke mode scene
+  // (template hanya basis baru, bukan revisi entri lama).
   const loadTemplateSpec = useCallback(async (id: string) => {
+    const token = ++templateLoadTokenRef.current;
     setBusy(true);
     try {
       const res = await fetch(`/api/template?id=${encodeURIComponent(id)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal memuat template.");
+      // Load basi (pengguna sudah membuka entri / generate / apply selagi
+      // fetch berjalan) — jangan timpa state baru.
+      if (token !== templateLoadTokenRef.current) return;
       setLivePreview(false);
       setScene(null);
       setPrevScene(null);
-      setActiveMineId(null);
+      setSkill(null);
+      setPrevSkill(null);
+      setActiveMine(null);
+      setMode("scene");
       setSpec({ templateId: id, title: data.title, caps: data.caps, vo: data.vo });
       setGeneratedHtml(null);
       setPreviewHtml(null);
@@ -147,13 +213,22 @@ export default function StudioPage() {
       setPlaying(false);
       setStatus(null);
     } catch (e) {
-      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal memuat template." });
+      if (token === templateLoadTokenRef.current) {
+        setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal memuat template." });
+      }
     } finally {
-      setBusy(false);
+      // Bila load sudah basi, busy dimiliki aksi lain — jangan sentuh.
+      if (token === templateLoadTokenRef.current) setBusy(false);
     }
-  }, []);
+  }, [setActiveMine]);
 
   useEffect(() => {
+    // Perubahan templateId dari revisi/apply (AI ganti template) TIDAK
+    // memuat ulang spec asli — lihat templateChangeFromApplyRef.
+    if (templateChangeFromApplyRef.current) {
+      templateChangeFromApplyRef.current = false;
+      return;
+    }
     loadTemplateSpec(templateId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId]);
@@ -240,23 +315,33 @@ export default function StudioPage() {
   // --- Simpan ke Video Buatan Saya ---
   // Setiap hasil generate OTOMATIS jadi entri baru (bukan menimpa template).
   // Revisi entri yang sedang dibuka memperbarui entri itu, bukan template aslinya.
+  // Kembalikan id entri yang disimpan, atau null bila gagal (misal kuota
+  // penyimpanan penuh — pemanggil menampilkan MINE_QUOTA_MESSAGE).
+  // TIDAK PERNAH diam-diam gagal simpan.
   const rememberResult = useCallback((entry: Omit<MineEntry, "id" | "createdAt">, updateId?: string | null) => {
-    if (updateId) {
-      const existing = loadMine().find((e) => e.id === updateId);
-      if (existing) {
-        const updated = updateMineEntry({ ...existing, ...entry, id: updateId, createdAt: existing.createdAt });
-        setMine(updated);
-        return updateId;
-      }
-    }
-    const id = newMineId();
-    setMine(saveMineEntry({ ...entry, id, createdAt: Date.now() }));
-    setActiveMineId(id);
-    return id;
-  }, []);
+    const existing = updateId ? loadMine().find((e) => e.id === updateId) : undefined;
+    const full: MineEntry = {
+      ...entry,
+      id: updateId ?? newMineId(),
+      createdAt: existing?.createdAt ?? Date.now(),
+    };
+    // Guard kuota SEBELUM simpan (satu template skill ~35-75 KB).
+    const { fits } = mineFitsBudget(loadMine(), full);
+    if (!fits) return null;
+    const result = updateId ? updateMineEntry(full) : saveMineEntry(full);
+    if (!result.saved) return null;
+    setMine(result.entries);
+    if (!updateId) setActiveMine(full.id);
+    return full.id;
+  }, [setActiveMine]);
 
   // --- Terapkan SceneSpec (jalur scene: generate / canned / undo / buka galeri) ---
-  const applyScene = async (next: SceneSpec, label: string, opts?: { save?: boolean }) => {
+  // opts.updateId: id entri yang diperbarui (undo) — bila tidak diisi,
+  // di-resolve dari entri aktif (ref). Bila tidak ada entri aktif, hasil
+  // disimpan sebagai entri BARU.
+  const applyScene = async (next: SceneSpec, label: string, opts?: { save?: boolean; updateId?: string | null }) => {
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
     setBusy(true);
     setLivePreview(false);
     setStatus({ kind: "info", text: `${label}…` });
@@ -275,6 +360,8 @@ export default function StudioPage() {
       setScene(data.scene);
       setSpec(null);
       setPrevSpec(null);
+      setSkill(null);
+      setPrevSkill(null);
       setGeneratedHtml(data.html);
       setPreviewHtml(data.previewHtml ?? data.html);
       setPreviewOn(true);
@@ -282,13 +369,23 @@ export default function StudioPage() {
       setPlaying(false);
       cbfShownRef.current = "";
       if (opts?.save !== false) {
-        const isUpdate = activeMineId && mine.some((e) => e.id === activeMineId && e.kind === "scene");
-        rememberResult(
+        // Keputusan update-vs-baru dari REF entri aktif (anti stale closure).
+        // updateId eksplisit (undo) mengalahkan resolve otomatis.
+        const activeEntry = resolveActiveEntry(loadMine(), activeMineIdRef.current);
+        const updateId =
+          opts?.updateId !== undefined ? opts.updateId : updateIdForKind(activeEntry, "scene");
+        const savedId = rememberResult(
           { title: data.scene.title, kind: "scene", duration: data.scene.duration, scene: data.scene },
-          isUpdate ? activeMineId : null,
+          updateId,
         );
+        setStatus(
+          savedId
+            ? { kind: "ok", text: `${label} berhasil — tersimpan di Video Buatan Saya, preview sudah berubah.` }
+            : { kind: "err", text: MINE_QUOTA_MESSAGE },
+        );
+      } else {
+        setStatus({ kind: "ok", text: `${label} berhasil — preview sudah berubah.` });
       }
-      setStatus({ kind: "ok", text: `${label} berhasil — tersimpan di Video Buatan Saya, preview sudah berubah.` });
     } catch (e) {
       setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal menerapkan scene." });
     } finally {
@@ -297,7 +394,13 @@ export default function StudioPage() {
   };
 
   // --- Terapkan spec lama (jalur bersama untuk edit manual / canned / undo) ---
-  const applySpec = async (next: Spec, label: string) => {
+  // opts.updateId: id entri yang diperbarui (undo) — bila tidak diisi,
+  // di-resolve dari entri aktif (ref). Tanpa entri aktif: TIDAK membuat
+  // entri baru (contoh tanpa AI hanya preview) — itu perilaku yang
+  // dipertahankan dari v1.
+  const applySpec = async (next: Spec, label: string, opts?: { save?: boolean; updateId?: string | null }) => {
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
     setBusy(true);
     setLivePreview(false);
     setStatus({ kind: "info", text: `${label}…` });
@@ -316,18 +419,36 @@ export default function StudioPage() {
       setSpec(data.spec);
       setScene(null);
       setPrevScene(null);
+      setSkill(null);
+      setPrevSkill(null);
       setGeneratedHtml(data.html);
       setPreviewHtml(data.previewHtml ?? data.html);
       setPreviewOn(true);
-      if (data.templateId !== templateId) setTemplateId(data.templateId);
-      // Edit manual / canned pada entri yang sedang dibuka memperbarui entri itu.
-      if (activeMineId && mine.some((e) => e.id === activeMineId && e.kind === "spec")) {
-        rememberResult(
-          { title: data.spec.title, kind: "spec", baseTemplateId: data.spec.templateId, duration: getTemplate(data.spec.templateId)?.duration ?? 0, spec: data.spec },
-          activeMineId,
-        );
+      if (data.templateId !== templateId) {
+        // AI ganti template saat revisi: jangan muat ulang spec asli template
+        // baru (lihat templateChangeFromApplyRef) — spec hasil revisi sudah benar.
+        templateChangeFromApplyRef.current = true;
+        setTemplateId(data.templateId);
       }
-      setStatus({ kind: "ok", text: `${label} berhasil — preview sudah berubah.` });
+      // Edit manual / canned pada entri yang sedang dibuka memperbarui entri itu.
+      let saveFailed = false;
+      if (opts?.save !== false) {
+        const activeEntry = resolveActiveEntry(loadMine(), activeMineIdRef.current);
+        const updateId =
+          opts?.updateId !== undefined ? opts.updateId : updateIdForKind(activeEntry, "spec");
+        if (updateId) {
+          const savedId = rememberResult(
+            { title: data.spec.title, kind: "spec", baseTemplateId: data.spec.templateId, duration: getTemplate(data.spec.templateId)?.duration ?? 0, spec: data.spec },
+            updateId,
+          );
+          if (!savedId) saveFailed = true;
+        }
+      }
+      setStatus(
+        saveFailed
+          ? { kind: "err", text: MINE_QUOTA_MESSAGE }
+          : { kind: "ok", text: `${label} berhasil — preview sudah berubah.` },
+      );
     } catch (e) {
       setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal menerapkan spec." });
     } finally {
@@ -335,22 +456,150 @@ export default function StudioPage() {
     }
   };
 
+  // --- Terapkan HTML template skill (jalur skill: generate / contoh / undo / buka galeri) ---
+  // Sinkron (HTML sudah ada di tangan — tidak ada fetch). Validasi keamanan
+  // diulang client-side sebagai defense-in-depth sebelum HTML ditampilkan.
+  // opts.updateId: id entri yang diperbarui (undo / revisi) — bila tidak
+  // diisi, di-resolve dari entri aktif (ref). Bila tidak ada entri aktif,
+  // hasil disimpan sebagai entri BARU kind "template".
+  const applySkill = (next: SkillVideo, label: string, opts?: { save?: boolean; updateId?: string | null; note?: string }) => {
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
+    const errors = validateSkillHtml(next.html);
+    if (errors.length > 0) {
+      setStatus({ kind: "err", text: `Template tidak aman, tidak ditampilkan: ${errors[0]}` });
+      return;
+    }
+    const { html: previewHtml, replaced } = rewriteThreeCdnToLocal(next.html);
+    if (replaced !== 13) {
+      setStatus({ kind: "err", text: `Template tidak memuat 13 script three.js r128 (ditemukan ${replaced}).` });
+      return;
+    }
+    setLivePreview(false);
+    setPrevSkill(skill);
+    setSkill(next);
+    setScene(null);
+    setPrevScene(null);
+    setSpec(null);
+    setPrevSpec(null);
+    setGeneratedHtml(next.html);
+    setPreviewHtml(previewHtml);
+    setPreviewOn(true);
+    setCurrentTime(0);
+    setPlaying(false);
+    cbfShownRef.current = "";
+    let saveFailed = false;
+    if (opts?.save !== false) {
+      const activeEntry = resolveActiveEntry(loadMine(), activeMineIdRef.current);
+      const updateId =
+        opts?.updateId !== undefined ? opts.updateId : updateIdForKind(activeEntry, "template");
+      const savedId = rememberResult(
+        { title: next.title, kind: "template", duration: next.duration, html: next.html },
+        updateId,
+      );
+      if (!savedId) saveFailed = true;
+    }
+    const okText =
+      opts?.save === false
+        ? `${label} berhasil — preview sudah berubah.`
+        : `${label} berhasil — tersimpan di Video Buatan Saya, preview sudah berubah.`;
+    setStatus(
+      saveFailed
+        ? { kind: "err", text: MINE_QUOTA_MESSAGE }
+        : { kind: "ok", text: opts?.note ? `${okText} (${opts.note})` : okText },
+    );
+  };
+
+  // Contoh template skill tanpa AI (trio bawaan, sudah lolos lint).
+  const applySkillExample = async () => {
+    setBusy(true);
+    setStatus({ kind: "info", text: "Menerapkan contoh template…" });
+    try {
+      const res = await fetch("/api/skill-example");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal memuat contoh template.");
+      applySkill({ title: data.title, html: data.html, duration: data.duration }, "Menerapkan contoh template");
+    } catch (e) {
+      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal memuat contoh template." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Revisi contoh template skill tanpa AI: ganti judul saja (HTML lain utuh).
+  const cannedSkillRevision = (current: SkillVideo): SkillVideo => {
+    const title = current.title.includes("—")
+      ? `${current.title.split("—")[0].trim()} — Revisi`
+      : `${current.title} — Revisi`;
+    return { title, html: retitleSkillHtml(current.html, title), duration: current.duration };
+  };
+
   // --- Buka entri Video Buatan Saya ---
+  // Membuka entri SELALU mengaktifkan mode revisi + mengisi ref entri aktif,
+  // apa pun kind-nya — generate berikutnya MEREVISI entri itu (Bug 1).
   const openMineEntry = async (entry: MineEntry) => {
-    setActiveMineId(entry.id);
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
+    setActiveMine(entry.id);
+    setMode("revisi");
     if (entry.kind === "scene" && entry.scene) {
       await applyScene(entry.scene, `Membuka "${entry.title}"`, { save: false });
-      setActiveMineId(entry.id);
+      setActiveMine(entry.id);
     } else if (entry.kind === "spec" && entry.spec) {
-      await applySpec(entry.spec, `Membuka "${entry.title}"`);
-      setActiveMineId(entry.id);
+      await applySpec(entry.spec, `Membuka "${entry.title}"`, { save: false });
+      setActiveMine(entry.id);
+    } else if (entry.kind === "template" && entry.html) {
+      applySkill(
+        { title: entry.title, html: entry.html, duration: entry.duration },
+        `Membuka "${entry.title}"`,
+        { save: false },
+      );
+      setActiveMine(entry.id);
     }
+  };
+
+  // Menutup entri aktif (bukan menghapus — entrinya tetap di galeri).
+  // Dipakai saat pengguna pindah ke mode buat-baru (scene/skill).
+  const closeActiveEntry = (reason: string) => {
+    const entry = resolveActiveEntry(loadMine(), activeMineIdRef.current);
+    if (!entry) return;
+    setActiveMine(null);
+    if (entry.kind === "scene") {
+      setScene(null);
+      setPrevScene(null);
+    }
+    if (entry.kind === "template") {
+      setSkill(null);
+      setPrevSkill(null);
+    }
+    // Spec dibiarkan: editor caption tetap menampilkan spec terakhir (preview saja).
+    setStatus({ kind: "info", text: `"${entry.title}" ditutup — ${reason}` });
+  };
+
+  // Ganti mode prompt. Mode buat-baru (scene/skill) SELALU mulai dari nol:
+  // bila ada entri aktif, tutup dulu dengan status jelas, lalu buat baru.
+  const switchMode = (next: GenerateMode) => {
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
+    if (next === "revisi") {
+      setMode("revisi");
+      return;
+    }
+    if (activeMineIdRef.current) {
+      closeActiveEntry(
+        next === "scene"
+          ? "prompt berikutnya membuat scene baru dari nol."
+          : "prompt berikutnya membuat template skill baru dari nol.",
+      );
+    }
+    setMode(next);
   };
 
   const removeMineEntry = (id: string) => {
     setMine(deleteMineEntry(id));
-    if (id === activeMineId) {
-      setActiveMineId(null);
+    if (id === activeMineIdRef.current) {
+      setActiveMine(null);
+      setMode("scene");
       setStatus({ kind: "info", text: "Video buatan dihapus dari galeri." });
     }
   };
@@ -362,11 +611,14 @@ export default function StudioPage() {
   // Partial yang datang sebelum iframe selesai dimuat dikirim ulang saat
   // iframe onLoad (lihat onLoad di bawah). /api/apply-scene TIDAK dipanggil
   // untuk partial — hanya event done yang memakai jalur normal.
-  const generateSceneStream = async () => {
+  const generateSceneStream = async (decision: Extract<GenerateDecision, { route: "scene" }>) => {
     const saved = loadProvider();
-    const isRevision = scene !== null;
+    // isRevision + updateId datang dari decideGenerate (entri aktif via ref),
+    // BUKAN dari `scene !== null` — scene bisa non-null tanpa entri aktif.
+    const isRevision = decision.isRevision;
     const ctrl = new AbortController();
     abortControllerRef.current = ctrl;
+    streamKindRef.current = "scene";
     lastPartialSceneRef.current = null;
     setStreaming(true);
     setStreamLogOpen(true);
@@ -381,7 +633,7 @@ export default function StudioPage() {
       const res = await fetch("/api/generate-scene-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), provider: saved ?? provider, currentScene: isRevision ? scene : null }),
+        body: JSON.stringify({ prompt: prompt.trim(), provider: saved ?? provider, currentScene: isRevision ? decision.currentScene : null }),
         signal: ctrl.signal,
       });
       if (!res.ok) {
@@ -440,6 +692,8 @@ export default function StudioPage() {
               setScene(ev.scene);
               setSpec(null);
               setPrevSpec(null);
+              setSkill(null);
+              setPrevSkill(null);
               setGeneratedHtml(ev.html);
               setPreviewHtml(ev.previewHtml ?? ev.html);
               setLivePreview(false);
@@ -447,17 +701,20 @@ export default function StudioPage() {
               setCurrentTime(0);
               setPlaying(false);
               cbfShownRef.current = "";
-              const isUpdate = isRevision && activeMineId && mine.some((e) => e.id === activeMineId && e.kind === "scene");
-              rememberResult(
+              const savedId = rememberResult(
                 { title: ev.scene.title, kind: "scene", duration: ev.scene.duration, scene: ev.scene },
-                isUpdate ? activeMineId : null,
+                decision.updateId,
               );
-              setStatus({
-                kind: "ok",
-                text: isRevision
-                  ? "Revisi scene berhasil — tersimpan di Video Buatan Saya."
-                  : `Scene baru berhasil dibuat — tersimpan di Video Buatan Saya sebagai template baru.${ev.repaired ? " (AI sempat memperbaiki sendiri.)" : ""}`,
-              });
+              setStatus(
+                savedId
+                  ? {
+                      kind: "ok",
+                      text: isRevision
+                        ? "Revisi scene berhasil — tersimpan di Video Buatan Saya."
+                        : `Scene baru berhasil dibuat — tersimpan di Video Buatan Saya sebagai video baru.${ev.repaired ? " (AI sempat memperbaiki sendiri.)" : ""}`,
+                    }
+                  : { kind: "err", text: MINE_QUOTA_MESSAGE },
+              );
             } else if (ev.type === "error") {
               finished = true;
               const extra = ev.validationErrors ? ` ${ev.validationErrors.join(" ")}` : "";
@@ -484,45 +741,189 @@ export default function StudioPage() {
     } finally {
       setStreaming(false);
       setBusy(false);
+      streamKindRef.current = null;
       abortControllerRef.current = null;
     }
   };
 
-  // --- Batalkan streaming: simpan partial terakhir sebagai DRAFT bila ada ---
+  // --- Generate template skill lewat AI dengan LIVE STREAMING (SSE) ---
+  // Pola sama seperti generateSceneStream (coba stream dulu, fallback
+  // non-streaming di server), tapi tanpa partial: HTML parsial tidak bisa
+  // di-preview, jadi token yang mengalir hanya tampil sebagai kode di
+  // panel streaming. Validasi keamanan + lint + self-repair (maks 3x)
+  // jalan server-side di /api/generate-skill; event done baru menampilkan
+  // preview + menyimpan entri.
+  const generateSkillStream = async (decision: Extract<GenerateDecision, { route: "skill" }>) => {
+    const saved = loadProvider();
+    const isRevision = decision.isRevision;
+    const ctrl = new AbortController();
+    abortControllerRef.current = ctrl;
+    streamKindRef.current = "skill";
+    setStreaming(true);
+    setStreamLogOpen(true);
+    setStreamText("");
+    setStreamStage(isRevision ? "AI merevisi template ini…" : "AI menulis template baru…");
+    setStreamSummary("");
+    setLivePreview(false);
+    setPreviewOn(true);
+    setBusy(true);
+    setStatus({ kind: "info", text: isRevision ? "AI merevisi template ini — kodenya mengalir di bawah preview…" : "AI menulis template baru — kodenya mengalir di bawah preview…" });
+    try {
+      const res = await fetch("/api/generate-skill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt.trim(), provider: saved ?? provider, currentHtml: isRevision ? decision.currentHtml : null }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        // Error JSON biasa (400/422) sebelum stream dimulai.
+        let msg = "Generate template gagal.";
+        try {
+          const data = await res.json();
+          if (data.code === "PROVIDER_MISSING") setShowSettings(true);
+          const extra = data.validationErrors ? ` ${data.validationErrors.join(" ")}` : "";
+          msg = (data.error ?? msg) + extra;
+        } catch {
+          // Pakai pesan default.
+        }
+        throw new Error(msg);
+      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Browser tidak mendukung streaming.");
+      const decoder = new TextDecoder();
+      let buf = "";
+      let finished = false;
+      while (!finished) {
+        const { done: readerDone, value } = await reader.read();
+        if (readerDone) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const rawEvent = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of rawEvent.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            let ev: SkillStreamEvent;
+            try {
+              ev = JSON.parse(payload) as SkillStreamEvent;
+            } catch {
+              continue;
+            }
+            if (ev.type === "token") {
+              setStreamText((prev) => prev + ev.text);
+            } else if (ev.type === "stage") {
+              setStreamStage(ev.text);
+            } else if (ev.type === "repaired") {
+              setStreamStage(`AI memperbaiki template (percobaan ${ev.attempt})…`);
+            } else if (ev.type === "done") {
+              finished = true;
+              const notes = [
+                ev.repaired ? `AI sempat memperbaiki sendiri (percobaan ${ev.attempts})` : null,
+                ev.lintWarnings.length > 0 ? `Lint: ${ev.lintWarnings[0]}` : null,
+              ]
+                .filter(Boolean)
+                .join(" ");
+              // applySkill menampilkan preview + menyimpan (update bila revisi).
+              applySkill(
+                { title: ev.title, html: ev.html, duration: ev.duration },
+                isRevision ? "Merevisi template" : "Membuat template baru",
+                { updateId: decision.updateId, note: notes || undefined },
+              );
+            } else if (ev.type === "error") {
+              finished = true;
+              const extra = ev.validationErrors ? ` ${ev.validationErrors.join(" ")}` : "";
+              throw new Error((ev.error ?? "Generate template gagal.") + extra);
+            }
+          }
+        }
+      }
+      try {
+        await reader.cancel();
+      } catch {
+        // Stream sudah tertutup — abaikan.
+      }
+      if (!finished) {
+        throw new Error("Koneksi streaming terputus sebelum selesai. Coba lagi, atau pakai mode Scene.");
+      }
+    } catch (e) {
+      if (ctrl.signal.aborted) {
+        // Dibatalkan pengguna — status sudah diisi cancelStream, jangan timpa.
+        return;
+      }
+      setLivePreview(false);
+      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Generate template gagal." });
+    } finally {
+      setStreaming(false);
+      setBusy(false);
+      streamKindRef.current = null;
+      abortControllerRef.current = null;
+    }
+  };
+
+  // --- Batalkan streaming ---
+  // Scene: simpan partial terakhir sebagai DRAFT bila ada.
+  // Skill: HTML parsial tidak bisa disimpan sebagai draft — batalkan saja.
   const cancelStream = () => {
     abortControllerRef.current?.abort();
-    const draft = lastPartialSceneRef.current;
+    const kind = streamKindRef.current;
     setLivePreview(false);
     setStreaming(false);
     setBusy(false);
+    streamKindRef.current = null;
+    if (kind !== "scene") {
+      setStatus({ kind: "info", text: "Dibatalkan." });
+      return;
+    }
+    const draft = lastPartialSceneRef.current;
     if (draft && draft.shots.length > 0) {
-      rememberResult({ title: `${draft.title} (draft)`, kind: "scene", duration: draft.duration, scene: draft });
-      setStatus({ kind: "info", text: "Dibatalkan — draft tersimpan di Video Buatan Saya." });
+      const id = rememberResult({ title: `${draft.title} (draft)`, kind: "scene", duration: draft.duration, scene: draft });
+      setStatus(
+        id
+          ? { kind: "info", text: "Dibatalkan — draft tersimpan di Video Buatan Saya." }
+          : { kind: "err", text: MINE_QUOTA_MESSAGE },
+      );
     } else {
       setStatus({ kind: "info", text: "Dibatalkan." });
     }
   };
 
-  // --- Generate / revisi lewat AI (tiga mode) ---
+  // --- Generate / revisi lewat AI (tiga mode, dua jalur + revisi spec) ---
+  // Keputusan HANYA dari entri aktif (via ref) + mode — lihat lib/revision.ts.
+  // Buka entri dari galeri -> generate berikutnya MEREVISI entri itu.
+  // Tanpa entri aktif: scene -> scene baru, skill -> template baru,
+  // revisi -> ditolak (tombol dinonaktifkan di UI).
   const generate = async () => {
     if (!prompt.trim()) {
       setStatus({ kind: "err", text: "Tulis dulu ide / instruksi revisinya di kotak prompt." });
       return;
     }
-    const saved = loadProvider();
+    // Batalkan load template yang sedang berjalan (lihat templateLoadTokenRef).
+    templateLoadTokenRef.current += 1;
+    const activeEntry = resolveActiveEntry(loadMine(), activeMineIdRef.current);
+    const decision = decideGenerate({ activeEntry, scene, spec, skill, mode });
+    if (decision.route === "none") {
+      setStatus({ kind: "err", text: decision.reason });
+      return;
+    }
     setBusy(true);
     try {
-      if (mode === "scene") {
+      if (decision.route === "scene") {
         // Mode scene memakai streaming SSE (generateSceneStream mengatur
         // busy/streaming sendiri; finally di bawah hanya pengaman).
-        await generateSceneStream();
+        await generateSceneStream(decision);
+        return;
+      }
+      if (decision.route === "skill") {
+        await generateSkillStream(decision);
         return;
       }
 
-      // Mode lama (template): buat baru / revisi spec.
-      const isRevision = mode === "revisi" && spec !== null;
-      if (isRevision && !spec) return;
-      setStatus({ kind: "info", text: isRevision ? "AI merevisi video ini…" : "AI membuat video baru…" });
+      // Jalur spec lama: HANYA revisi entri spec — /api/generate menolak
+      // request tanpa currentSpec (400).
+      const saved = loadProvider();
+      setStatus({ kind: "info", text: "AI merevisi video ini…" });
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -530,7 +931,7 @@ export default function StudioPage() {
           prompt: prompt.trim(),
           templateId,
           provider: saved ?? provider,
-          currentSpec: isRevision ? spec : null,
+          currentSpec: decision.currentSpec,
         }),
       });
       const data = await res.json();
@@ -546,12 +947,17 @@ export default function StudioPage() {
       setSpec(data.spec);
       setScene(null);
       setPrevScene(null);
+      setSkill(null);
+      setPrevSkill(null);
       setGeneratedHtml(data.html);
       setPreviewHtml(data.previewHtml ?? data.html);
       setPreviewOn(true);
-      if (data.templateId !== templateId) setTemplateId(data.templateId);
-      const isUpdate = isRevision && activeMineId && mine.some((e) => e.id === activeMineId && e.kind === "spec");
-      rememberResult(
+      if (data.templateId !== templateId) {
+        // AI ganti template saat revisi: jangan muat ulang spec asli.
+        templateChangeFromApplyRef.current = true;
+        setTemplateId(data.templateId);
+      }
+      const savedId = rememberResult(
         {
           title: data.spec.title,
           kind: "spec",
@@ -559,14 +965,13 @@ export default function StudioPage() {
           duration: getTemplate(data.spec.templateId)?.duration ?? 0,
           spec: data.spec,
         },
-        isUpdate ? activeMineId : null,
+        decision.updateId,
       );
-      setStatus({
-        kind: "ok",
-        text: isRevision
-          ? "Revisi berhasil — entri Video Buatan Saya diperbarui."
-          : "Video baru berhasil dibuat — tersimpan di Video Buatan Saya sebagai template baru.",
-      });
+      setStatus(
+        savedId
+          ? { kind: "ok", text: "Revisi berhasil — entri Video Buatan Saya diperbarui." }
+          : { kind: "err", text: MINE_QUOTA_MESSAGE },
+      );
     } catch (e) {
       setStatus({ kind: "err", text: e instanceof Error ? e.message : "Generate gagal." });
     } finally {
@@ -575,17 +980,32 @@ export default function StudioPage() {
   };
 
   const undo = async () => {
+    // Undo memperbarui entri aktif (bukan bikin baru); bila entri aktif
+    // sudah dihapus, undo hanya mengembalikan preview (save: false).
+    if (skill && prevSkill) {
+      const target = prevSkill;
+      setPrevSkill(null);
+      const id = activeMineIdRef.current;
+      if (id) applySkill(target, "Mengembalikan template sebelumnya", { updateId: id });
+      else applySkill(target, "Mengembalikan template sebelumnya", { save: false });
+      setPrevSkill(null);
+      return;
+    }
     if (scene && prevScene) {
       const target = prevScene;
       setPrevScene(null);
-      await applyScene(target, "Mengembalikan scene sebelumnya", { save: false });
+      const id = activeMineIdRef.current;
+      if (id) await applyScene(target, "Mengembalikan scene sebelumnya", { updateId: id });
+      else await applyScene(target, "Mengembalikan scene sebelumnya", { save: false });
       setPrevScene(null);
       return;
     }
     if (!prevSpec) return;
     const target = prevSpec;
     setPrevSpec(null);
-    await applySpec(target, "Mengembalikan versi sebelumnya");
+    const id = activeMineIdRef.current;
+    if (id) await applySpec(target, "Mengembalikan versi sebelumnya", { updateId: id });
+    else await applySpec(target, "Mengembalikan versi sebelumnya", { save: false });
     // applySpec menimpa prevSpec dengan spec saat ini; untuk undo 1 langkah
     // itu sudah benar: tidak ada riwayat lebih jauh di v1.
     setPrevSpec(null);
@@ -595,11 +1015,16 @@ export default function StudioPage() {
     // Download memakai generatedHtml CANONICAL (CDN) — sengaja, supaya file
     // hasil download jalan standalone di browser normal. Preview memakai
     // previewHtml (/vendor/ lokal) dan tidak pernah diunduh.
-    if (!generatedHtml || (!spec && !scene)) {
-      setStatus({ kind: "err", text: "Belum ada hasil generate. Buat video dulu atau terapkan edit caption." });
+    // Berlaku untuk ketiga kind (scene / spec / template skill): entri
+    // template menyimpan HTML lengkap yang portabel.
+    if (!generatedHtml || (!spec && !scene && !skill)) {
+      setStatus({ kind: "err", text: "Belum ada hasil. Buat scene/skill baru atau buka video dari Video Buatan Saya." });
       return;
     }
-    const name = scene ? scene.title.replace(/[^\w\- ]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "scene" : `${spec?.templateId ?? "claudeku"}`;
+    const title = scene?.title ?? skill?.title;
+    const name = title
+      ? title.replace(/[^\w\- ]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "video"
+      : `${spec?.templateId ?? "claudeku"}`;
     const url = URL.createObjectURL(new Blob([generatedHtml], { type: "text/html" }));
     const a = document.createElement("a");
     a.href = url;
@@ -630,7 +1055,7 @@ export default function StudioPage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${scene ? "scene" : (spec?.templateId ?? "claudeku")}-rekaman.webm`;
+        a.download = `${skill ? "skill" : scene ? "scene" : (spec?.templateId ?? "claudeku")}-rekaman.webm`;
         a.click();
         URL.revokeObjectURL(url);
         setRecording(false);
@@ -696,12 +1121,41 @@ export default function StudioPage() {
 
   const modeHint =
     mode === "scene"
-      ? scene
-        ? "AI merevisi scene ini: shot, beat, pose, dan monitor bisa berubah — hasilnya tetap tersimpan sebagai video buatanmu."
-        : "AI membuat scene BARU dari nol: adegan, kamera, pose, dan cerita ditentukan AI lewat mesin scene — bukan menempel di template lama."
-      : mode === "baru"
-        ? "AI membuat resep video baru dari nol di template yang dipilih. Hasilnya tersimpan sebagai template baru di Video Buatan Saya."
-        : "AI menerima video saat ini sebagai konteks dan hanya mengubah yang kamu minta — sisanya dipertahankan. Bisa juga ganti template & judul.";
+      ? "AI membuat scene BARU dari nol: adegan, kamera, pose, dan cerita ditentukan AI lewat mesin scene — bukan menempel di template lama."
+      : mode === "skill"
+        ? "AI menulis SATU FILE HTML template lengkap mengikuti skill threejs-cinematic-short: adegan, kamera, pose, dan monitor bebas — tidak terikat kosakata scene. Hasil dicek lint + keamanan, lalu tersimpan sebagai template baru."
+        : !activeEntry
+          ? "Buka dulu video dari Video Buatan Saya — revisi butuh video aktif."
+          : activeEntry.kind === "scene"
+            ? `Merevisi scene "${activeEntry.title}": shot, beat, pose, dan monitor bisa berubah — hasilnya memperbarui video ini.`
+            : activeEntry.kind === "template"
+              ? `Merevisi template "${activeEntry.title}": AI menerima HTML lengkap sebagai konteks dan menulis ulang file-nya — hasilnya memperbarui video ini.`
+              : `Merevisi video "${activeEntry.title}": AI menerima video ini sebagai konteks dan hanya mengubah yang kamu minta — sisanya dipertahankan. Bisa juga ganti template & judul.`;
+
+  // Label tombol generate mengikuti (mode, entri aktif) — bukan mode saja.
+  const generateLabel =
+    mode === "revisi"
+      ? activeEntry?.kind === "scene"
+        ? "Revisi Scene"
+        : activeEntry?.kind === "template"
+          ? "Revisi Template"
+          : "Revisi Video"
+      : mode === "skill"
+        ? "Buat Template"
+        : "Buat Scene";
+
+  // Tombol contoh tanpa AI mengikuti alur yang sedang dipakai: skill,
+  // scene, atau spec (mode revisi mengikuti kind entri aktif).
+  const exampleKind: "scene" | "skill" | "spec" =
+    mode === "skill"
+      ? "skill"
+      : mode === "scene"
+        ? "scene"
+        : activeEntry?.kind === "template"
+          ? "skill"
+          : activeEntry?.kind === "scene"
+            ? "scene"
+            : "spec";
 
   return (
     <>
@@ -719,14 +1173,14 @@ export default function StudioPage() {
         <aside className="card">
           <h2>Video Buatan Saya {mine.length > 0 ? `(${mine.length})` : ""}</h2>
           {mine.length === 0 && (
-            <p className="note">Belum ada. Hasil generate (scene maupun template) otomatis tersimpan di sini sebagai template baru — template bawaan tidak pernah ketimpa.</p>
+            <p className="note">Belum ada. Hasil generate otomatis tersimpan di sini sebagai video baru — template bawaan tidak pernah ketimpa.</p>
           )}
           {mine.map((entry) => (
             <div key={entry.id} className={`gallery-item mine-item ${entry.id === activeMineId ? "active" : ""}`}>
               <button className="mine-open" onClick={() => openMineEntry(entry)}>
                 <b>{entry.title}</b>
                 <span>
-                  {entry.kind === "scene" ? "🎬 Scene" : "📄 Template"} · {entry.duration} dtk · {fmtDate(entry.createdAt)}
+                  {entry.kind === "scene" ? "🎬 Scene" : entry.kind === "template" ? "🧩 Skill" : "📄 Spec"} · {entry.duration} dtk · {fmtDate(entry.createdAt)}
                 </span>
               </button>
               <button className="mine-del" onClick={() => removeMineEntry(entry.id)} aria-label={`Hapus ${entry.title}`}>
@@ -739,7 +1193,7 @@ export default function StudioPage() {
           {TEMPLATES.map((t) => (
             <button
               key={t.id}
-              className={`gallery-item compact ${t.id === templateId && !scene ? "active" : ""}`}
+              className={`gallery-item compact ${t.id === templateId && !scene && !skill ? "active" : ""}`}
               onClick={() => setTemplateId(t.id)}
               title={t.description}
             >
@@ -811,7 +1265,7 @@ export default function StudioPage() {
               <button className="btn small" onClick={() => seek(Math.max(0, currentTime - 5))} disabled={!previewOn}>−5 dtk</button>
               <button className="btn small" onClick={() => seek(Math.min(duration, currentTime + 5))} disabled={!previewOn}>+5 dtk</button>
               <button className="btn small" onClick={downloadHtml}>⬇ Download HTML</button>
-              {(prevSpec || prevScene) && (
+              {(prevSpec || prevScene || prevSkill) && (
                 <button className="btn small" onClick={undo} disabled={busy}>
                   ↩ Kembalikan ke versi sebelumnya
                 </button>
@@ -863,42 +1317,73 @@ export default function StudioPage() {
         <aside className="card">
           <h2>Prompt AI</h2>
           <div className="mode-toggle" role="tablist" aria-label="Mode prompt">
-            <button className={mode === "baru" ? "active" : ""} onClick={() => setMode("baru")}>
-              ✨ Buat baru
-            </button>
-            <button className={mode === "revisi" ? "active" : ""} onClick={() => setMode("revisi")}>
-              ✏️ Revisi video ini
-            </button>
-            <button className={mode === "scene" ? "active" : ""} onClick={() => setMode("scene")}>
+            <button className={mode === "scene" ? "active" : ""} onClick={() => switchMode("scene")}>
               🎬 Scene baru
+            </button>
+            <button className={mode === "skill" ? "active" : ""} onClick={() => switchMode("skill")}>
+              🧩 Skill penuh
+            </button>
+            <button
+              className={mode === "revisi" ? "active" : ""}
+              onClick={() => switchMode("revisi")}
+              disabled={!hasActiveEntry}
+              title={!hasActiveEntry ? "Buka dulu video dari Video Buatan Saya" : undefined}
+            >
+              ✏️ Revisi video ini
             </button>
           </div>
           <p className="note" style={{ marginTop: 8 }}>{modeHint}</p>
-          {mode === "scene" && scene && (
+          {mode === "revisi" && activeEntry && (
             <p className="note">
-              Scene aktif: <b>{scene.title}</b> ({scene.duration} dtk). Prompt di bawah akan merevisi scene ini.{" "}
-              <button className="linklike" onClick={() => { setScene(null); setPrevScene(null); setActiveMineId(null); setStatus({ kind: "info", text: "Scene ditutup — prompt berikutnya membuat scene baru dari nol." }); }}>
-                Tutup scene, buat baru
+              Video aktif: <b>{activeEntry.title}</b> ({activeEntry.duration} dtk). Prompt di bawah akan merevisi video ini.{" "}
+              <button className="linklike" onClick={() => { closeActiveEntry("prompt berikutnya membuat video baru dari nol."); setMode("scene"); }}>
+                Tutup video, buat baru
               </button>
             </p>
           )}
           <textarea
             className="prompt"
             placeholder={
-              mode === "scene"
-                ? "Contoh: Claude dan Codex balapan roket sambil minum kopi, endingnya trofi jatuh ke kepala Gemini…"
-                : mode === "baru"
-                  ? "Contoh: Claude vs Codex debat siapa paling cepat ngetik, endingnya kerja bareng…"
-                  : "Contoh: ganti endingnya jadi ajakan kerja bareng, bikin dialog Codex lebih pendek…"
+              mode === "skill"
+                ? "Contoh: maskot Claude ketiduran di keyboard pas deadline, dibangunkan bos, lalu ngebut ngetik sampai selesai…"
+                : mode === "scene"
+                  ? "Contoh: Claude dan Codex balapan roket sambil minum kopi, endingnya trofi jatuh ke kepala Gemini…"
+                  : activeEntry?.kind === "template"
+                    ? "Contoh: tambahkan adegan hujan di luar jendela, ganti endingnya jadi ajakan kerja bareng…"
+                    : activeEntry?.kind === "scene"
+                      ? "Contoh: ganti endingnya jadi trofi jatuh ke kepala Gemini, tambahkan adegan hujan…"
+                      : activeEntry
+                        ? "Contoh: ganti endingnya jadi ajakan kerja bareng, bikin dialog Codex lebih pendek…"
+                        : "Buka dulu video dari Video Buatan Saya, lalu tulis revisinya di sini…"
             }
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
           />
           <div className="btnrow" style={{ marginTop: 10 }}>
-            <button className="btn primary" onClick={generate} disabled={busy}>
-              {busy ? "Memproses…" : mode === "scene" ? (scene ? "Revisi Scene" : "Buat Scene") : mode === "baru" ? "Buat Video" : "Revisi Video"}
+            <button className="btn primary" onClick={generate} disabled={busy || (mode === "revisi" && !hasActiveEntry)}>
+              {busy ? "Memproses…" : generateLabel}
             </button>
-            {mode === "scene" ? (
+            {exampleKind === "skill" ? (
+              <>
+                <button className="btn small" disabled={busy} onClick={applySkillExample}>
+                  Coba contoh template (tanpa AI)
+                </button>
+                <button
+                  className="btn small"
+                  disabled={busy || !skill}
+                  onClick={() => {
+                    if (!skill) return;
+                    try {
+                      applySkill(cannedSkillRevision(skill), "Menerapkan revisi contoh template");
+                    } catch (e) {
+                      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Revisi contoh gagal." });
+                    }
+                  }}
+                >
+                  Coba revisi contoh
+                </button>
+              </>
+            ) : exampleKind === "scene" ? (
               <>
                 <button className="btn small" disabled={busy} onClick={() => applyScene(CANNED_SCENE, "Menerapkan contoh scene")}>
                   Coba contoh scene (tanpa AI)
@@ -932,11 +1417,12 @@ export default function StudioPage() {
           </div>
           <p className="note">
             Generate butuh provider (Settings). Kalau belum diisi, pakai tombol contoh di atas — tanpa AI live.
+            {mode === "skill" && " Mode Skill menulis satu file HTML lengkap — lebih berat dari Scene; bila provider gagal, coba mode Scene."}
           </p>
 
           <details className="more">
             <summary>Editor Caption {spec ? `(${spec.caps.length} baris)` : ""}</summary>
-            {!spec && <p className="note">Memuat template… (editor caption hanya untuk video template, bukan scene.)</p>}
+            {!spec && <p className="note">Editor caption hanya untuk video spec — pilih template bawaan atau buka video spec dari Video Buatan Saya. (Scene dan template skill direvisi lewat prompt.)</p>}
             {spec?.caps.map((cap, i) => {
               const wps = wordsPerSecond(cap);
               return (

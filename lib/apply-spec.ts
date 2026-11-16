@@ -1,6 +1,7 @@
 // Menempelkan Spec ke HTML template — satu-satunya tempat HTML diubah.
-// Aturan: hanya ganti baris <title>, array caps=[...], dan array VO=[...] bila
-// eksplisit. Kalau pola tidak ditemukan -> throw, jangan hasilkan HTML rusak.
+// Aturan: ganti baris <title>, TEKS judul layar di <div id="title">,
+// array caps=[...], dan array VO=[...] bila eksplisit. Kalau pola tidak
+// ditemukan -> throw, jangan hasilkan HTML rusak.
 // Credit @hanzvibes TIDAK PERNAH disentuh; hasil akhir divalidasi ulang.
 import { getTemplate } from "./templates";
 import { findBracketArray, parseTemplateHtml, type Spec } from "./spec";
@@ -45,6 +46,17 @@ export function applySpecToHtml(html: string, spec: Spec): string {
   if (!/<title>[^<]*<\/title>/.test(html)) throw new Error("<title> tidak ditemukan di template.");
   let out = html.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(spec.title)}</title>`);
 
+  // 1b. Judul LAYAR — teks di dalam <div id="title"> (bukan cuma <title>).
+  //     Semua 9 template bawaan memakai pola yang sama:
+  //     <div id="title"><svg class="st"></svg>TEKS<small>subjudul</small></div>
+  //     TEKS boleh mengandung <br> (template trio). Subjudul <small> dibiarkan
+  //     apa adanya (identitas template), hanya TEKS utama yang diganti dengan
+  //     spec.title. JS template hanya memakai #title untuk .style (fade),
+  //     jadi mengganti text node-nya aman.
+  const titleDiv = /(<div id="title"><svg class="st"><\/svg>)[\s\S]*?(<small)/.exec(out);
+  if (!titleDiv) throw new Error('Judul layar <div id="title"> tidak ditemukan di template.');
+  out = out.slice(0, titleDiv.index) + titleDiv[1] + escapeHtml(spec.title) + titleDiv[2] + out.slice(titleDiv.index + titleDiv[0].length);
+
   // 2. Caps — ganti isi array caps=[...] (scan bracket yang seimbang)
   const capsArr = findBracketArray(out, "caps=");
   if (!capsArr) throw new Error("caps=[...] tidak ditemukan di template.");
@@ -61,6 +73,11 @@ export function applySpecToHtml(html: string, spec: Spec): string {
   // 4. Validasi akhir: credit utuh + hasil parse kembali sama dengan spec.
   const creditErrors = validateCredit(out);
   if (creditErrors.length > 0) throw new Error(creditErrors.join(" "));
+  // Judul layar harus sama dengan spec.title (bukan judul hardcoded template).
+  const screenTitle = /<div id="title"><svg class="st"><\/svg>([\s\S]*?)<small/.exec(out);
+  if (!screenTitle || screenTitle[1] !== escapeHtml(spec.title)) {
+    throw new Error("Hasil apply tidak konsisten: judul layar tidak sama dengan spec.title.");
+  }
   const parsed = parseTemplateHtml(out);
   if (parsed.caps.length !== spec.caps.length) {
     throw new Error(`Hasil apply tidak konsisten: ${parsed.caps.length} caption, seharusnya ${spec.caps.length}.`);

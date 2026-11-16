@@ -101,7 +101,7 @@ bawaan jenis kamera); `lookAt` = titik yang dilihat `[x, y, z]`
 | `glide` | Glide | Meluncur halus (lerp ~1,5 dtk) dari shot sebelumnya — gaya template lama, default. |
 | `orbit` | Orbit | Mengorbit perlahan mengelilingi karakter fokus selama shot (±~70°). |
 | `dolly` | Dolly-zoom | Kamera maju (z 8,6 → 5,6) sambil FOV menyempit 14° — efek dramatis/tegang. |
-| `overhead` | Overhead | Dari atas (y 8,5) melihat meja + semua karakter sekaligus. |
+| `overhead` | Overhead | Dari atas-belakang (pos y 9,2, z 3,6; look [0, 1,8, -0,8] ke arah papan skor) — meja + semua karakter + papan skor utuh di frame. |
 | `closeup` | Close-up wajah | Dekat ke wajah fokus (jarak ~3,1) — untuk reaksi / punchline. |
 | `twoshot` | Two-shot | Tengah-tengah karakter fokus dan sebelahnya — untuk debat/dialog berdua. |
 | `low` | Low-angle | Rendah (y 0,45) melihat ke atas — karakter terlihat gagah/mengancam. |
@@ -155,10 +155,10 @@ wajah khawatir, `lose`/`sleep` → wajah datar.
 | `countdown` | Countdown | Angka besar 3-2-1 di tengah layar, dihitung dari sisa waktu beat (`ceil(end - t)`). | `text` opsional (judul hitungan) |
 | `confetti` | Confetti / ledakan | Partikel warna-warni meledak dari karakter (burst berulang tiap 1,2 dtk selama beat). | `text` opsional |
 | `typewriter` | Typewriter | Teks mengetik sendiri di monitor karakter (`monitor.lines`, ~22 karakter/dtk). | `monitor.lines` |
-| `glitch` | Glitch | Kamera bergetar acak + shader cine menggeser hue/grain sesaat. | `text` opsional (misal `ERROR 500`) |
+| `glitch` | Glitch | Glitch HALUS: getar kamera kecil (±0,03/±0,02) + shader cine RGB split/noise kecil (`gl` 0,35); teks beat tampil jelas sebagai DOM `#glitch` di tengah layar (bukan mengandalkan frame 3D). | `text` opsional (misal `ERROR 500`) |
 | `slowmo` | Slow-mo | Gerakan maskot melambat 0,4× selama beat. Dihitung sebagai waktu ter-warp `te(t)` (fungsi murni dari `t`, jadi seek/export frame tetap konsisten); kamera, bubble, dan suara tidak melambat. | — |
 | `scoreboard` | Scoreboard update | Papan skor berubah. `monitor.value`: bila **array 3 angka** → skor ketiga karakter; bila **satu angka** → skor karakter beat itu (lainnya tetap). Skor dihitung ulang dari nol tiap frame dari semua beat scoreboard yang sudah lewat, jadi seek mundur konsisten. | `monitor.value` |
-| `toast` | Toast notifikasi | Banner kecil di atas layar selama beat. | `text` (misal `Deploy berhasil ✔`) |
+| `toast` | Toast notifikasi | Banner kecil di atas layar selama beat. Kerapian: `normalizeSceneSpec` menggeser toast yang tumpang tindih dengan beat `glitch` / beat bermonitor ke akhir beat penghalang (atau menghapusnya bila tidak ada ruang sampai akhir durasi). | `text` (misal `Deploy berhasil ✔`) |
 | `custom` | Custom (kode) | Kode JS kecil di luar kosakata, jalan di iframe sandbox (lihat §9). | `code` + `fallbackText` (wajib) |
 
 `character` = index karakter yang melakukan beat (default 0).
@@ -323,4 +323,13 @@ Contoh beat custom:
   di-redraw hanya saat kuncinya berubah; slow-mo memakai waktu ter-warp
   murni-dari-`t` agar seek konsisten.
 - Overlay DOM tambahan: `#count` (countdown), `#toast`, `#zzz` (tidur),
-  `#flash` (kilat custom), `#cbf` (pesan error custom beat, tersembunyi).
+  `#flash` (kilat custom), `#cbf` (pesan error custom beat, tersembunyi),
+  `#glitch` (teks beat glitch, tengah layar).
+- Judul auto-fit (`fitTitle()` di `dynamic.html` + `template-trio.html` /
+  `template-rival.html` / `template.html`): font dikecilkan sampai teks muat
+  ≤2 baris dalam 92% lebar stage DAN blok judul ≤15% tinggi stage, dari
+  posisi atas 4% — supaya judul panjang tidak pernah menutupi papan skor
+  (tepi atas papan ~21% tinggi stage). Template lain tidak diubah: judulnya
+  pendek (≤17 karakter) dan tidak punya papan skor.
+- Kerapian toast: `normalizeSceneSpec` (lihat §6, baris `toast`) menggeser
+  toast yang bertabrakan dengan beat `glitch` / beat bermonitor.
