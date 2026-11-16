@@ -170,9 +170,15 @@ export default function StudioPage() {
 
   // --- Redesign layout (referensi studio/ pack v3.14) ---
   // Drawer galeri kiri (tutup/buka; overlay + scrim di layar sempit).
-  const [drawerOpen, setDrawerOpen] = useState(
-    () => typeof window === "undefined" || window.innerWidth >= 1180,
-  );
+  // Default TERTUTUP saat render pertama: initializer lama
+  // (`typeof window === "undefined" || innerWidth >= 1180`) jalan di server
+  // saat SSR (window undefined → true), dan hidrasi mempertahankan state
+  // server — jadi di HP drawer terbuka sendiri menutupi layar tanpa ada
+  // tombol tutup yang terlihat. Layar lebar dibuka lagi sesudah mount.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => {
+    if (window.innerWidth >= 1180) setDrawerOpen(true);
+  }, []);
   // Inspector kanan: tab Teks / Shot / Caption.
   const [inspectorTab, setInspectorTab] = useState<"teks" | "shot" | "cap">("teks");
   // Transport pill: loop on = video mengulang seperti template aslinya.
@@ -1330,7 +1336,12 @@ export default function StudioPage() {
         <div className={`scrim${drawerOpen ? " open" : ""}`} onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         {/* Kolom kiri: galeri — Video Buatan Saya + Template Bawaan */}
         <aside className={`card drawer${drawerOpen ? " open" : ""}`}>
-          <h2>Video Buatan Saya {mine.length > 0 ? `(${mine.length})` : ""}</h2>
+          <div className="drawer-head">
+            <h2>Video Buatan Saya {mine.length > 0 ? `(${mine.length})` : ""}</h2>
+            <button className="icon-btn drawer-close" onClick={() => setDrawerOpen(false)} aria-label="Tutup galeri">
+              ✕
+            </button>
+          </div>
           {mine.length === 0 && (
             <p className="note">Belum ada. Hasil generate otomatis tersimpan di sini sebagai video baru — template bawaan tidak pernah ketimpa.</p>
           )}

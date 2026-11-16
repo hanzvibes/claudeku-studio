@@ -167,6 +167,9 @@ details.more .cap-row { margin-top: 8px; }
 .chip:hover { border-color: var(--accent-line); color: var(--accent-deep); background: var(--accent-soft); }
 
 /* Drawer kiri (galeri): bisa dilipat; di layar <=1180px jadi overlay + scrim. */
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+.drawer-head h2 { margin: 0; }
+.drawer-close { flex-shrink: 0; }
 .drawer { transition: transform 0.3s var(--ease), opacity 0.24s; min-width: 0; overflow: hidden; }
 main.layout.drawer-closed .drawer {
   transform: translateX(-12px); opacity: 0; pointer-events: none; border-width: 0; padding: 0;
