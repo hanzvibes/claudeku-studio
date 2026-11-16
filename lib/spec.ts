@@ -110,6 +110,85 @@ export function extractJsonFromText(text: string): unknown {
   return JSON.parse(slice);
 }
 
+/**
+ * Parse JSON yang MASIH MENGALIR (streaming): tutup struktur yang masih
+ * terbuka (kurung/kurawal) di titik nilai lengkap terakhir, lalu parse.
+ *
+ * extractJsonFromText biasa gagal di tengah stream karena object root
+ * belum tertutup — slice ke "}" terakhir menghasilkan JSON tak seimbang.
+ * Fungsi ini memindai teks sambil mencatat "checkpoint" (posisi tepat
+ * sesudah sebuah nilai lengkap: string tertutup, object/array tertutup,
+ * atau nilai sebelum koma), lalu mencoba dari checkpoint terbaru:
+ * potong di situ + tutup stack kurung yang masih terbuka. Kembalikan
+ * object hasil parse pertama yang berhasil, atau null bila belum ada
+ * nilai lengkap yang bisa di-parse (misal string judul masih terpotong
+ * di tengah).
+ *
+ * Dipakai /api/generate-scene-stream untuk preview parsial live.
+ * Bukan pengganti extractJsonFromText untuk hasil akhir.
+ */
+export function extractPartialJsonFromText(text: string): unknown | null {
+  const cleaned = text.replace(/```(?:json)?\s*/gi, "```").replace(/```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start < 0) return null;
+  const s = cleaned.slice(start);
+  type Checkpoint = { pos: number; stack: string[] };
+  const checkpoints: Checkpoint[] = [];
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  const snap = () => stack.slice();
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') {
+        inStr = false;
+        checkpoints.push({ pos: i + 1, stack: snap() });
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === "{") stack.push("{");
+    else if (ch === "[") stack.push("[");
+    else if (ch === "}") {
+      if (stack[stack.length - 1] !== "{") return null;
+      stack.pop();
+      checkpoints.push({ pos: i + 1, stack: snap() });
+      if (stack.length === 0) {
+        // Object root lengkap — parse langsung.
+        try {
+          return JSON.parse(s.slice(0, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    } else if (ch === "]") {
+      if (stack[stack.length - 1] !== "[") return null;
+      stack.pop();
+      checkpoints.push({ pos: i + 1, stack: snap() });
+    } else if (ch === ",") {
+      checkpoints.push({ pos: i, stack: snap() });
+    }
+  }
+  // Coba checkpoint dari yang terbaru: tutup stack yang masih terbuka.
+  for (let c = checkpoints.length - 1; c >= 0; c--) {
+    const { pos, stack: st } = checkpoints[c];
+    let candidate = s.slice(0, pos);
+    for (let k = st.length - 1; k >= 0; k--) candidate += st[k] === "{" ? "}" : "]";
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Coba checkpoint lebih awal.
+    }
+  }
+  return null;
+}
+
 // ---------- Parsing template HTML asli (dipakai /api/template & apply) ----------
 
 /** Scan array JS yang diawali `needle=[`, hormati string '...' (escape \'). */

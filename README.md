@@ -98,6 +98,38 @@ python3 scripts/export_mp4.py hasil.html hasil.mp4 60
 ffmpeg -framerate 60 -i f_%04d.png -c:v libx264 -pix_fmt yuv420p hasil.mp4
 ```
 
+## Mesin scene (Hybrid Level 4) + live streaming
+
+Selain generate berbasis template di atas, ada mode **“🎬 Scene baru”**:
+
+- AI menulis **SceneSpec** lengkap dari nol — shot kamera, beat adegan, pose,
+  props, isi monitor, palet — bukan sekadar ganti teks di template lama.
+  Renderer dinamis (`public/templates/dynamic.html`) memainkannya. Kosakata
+  lengkap ada di `docs/SCENE-ENGINE.md` (10 pose, 7 kamera, 9 beat, 8 props,
+  6 jenis monitor, 4 palet, 4 transisi).
+- **Escape hatch kode kustom:** bila adegan tidak bisa dibuat dari kosakata,
+  AI boleh menulis kode JS kecil (beat `custom`). Kode itu jalan di iframe
+  sandbox terpisah, hanya boleh memanggil `api.pose / api.prop / api.monitor
+  / api.flash / api.toast`; sintaks + blocklist divalidasi server
+  (`lib/scene-spec.ts`). Bila gagal saat jalan, renderer jatuh ke
+  `fallbackText` (dialog aman) + toast “Adegan kustom gagal, diganti adegan
+  aman”. Bila SceneSpec dari AI tidak lolos validasi, server meminta AI
+  memperbaiki sendiri (self-repair, maks 2x).
+- **Live streaming saat generate:** endpoint `/api/generate-scene-stream`
+  (SSE) mencoba `stream:true` ke provider dan meneruskan token kata-per-kata
+  ke panel streaming; preview ikut kebangun adegan per adegan lewat
+  `postMessage` ke iframe (`/api/preview-scene`) tanpa reload penuh. Bila
+  provider tidak mendukung stream, otomatis fallback ke mode tahapan
+  (“lagi nulis cerita…”, “lagi atur kamera…”, “lagi cek adegan…”). Tombol
+  **Batalkan** menghentikan stream dan menyimpan hasil parsial sebagai draft
+  bila sudah ada minimal 1 shot valid. Streaming tidak menambah biaya (satu
+  generasi yang sama, hanya ditampilkan progresif). Dukungan `stream:true`
+  provider live pengguna belum terverifikasi (butuh kredensial pengguna).
+- **Video Buatan Saya:** setiap hasil generate (scene maupun template)
+  OTOMATIS tersimpan sebagai entri baru di galeri (localStorage, key
+  `claudeku.mine`) — 9 template bawaan tidak pernah ditimpa. Entri bisa
+  dibuka lagi, direvisi, dihapus, dan diekspor (Download HTML).
+
 ## Self-host (Docker)
 
 ```bash
@@ -125,20 +157,30 @@ app/
     generate/route.ts      POST {prompt, templateId, provider, currentSpec?}
     preview/route.ts       GET ?id= — serve template untuk preview (rewrite CDN -> /vendor/)
     test-provider/route.ts POST {baseUrl, model, apiKey} — tes koneksi provider
+    apply-scene/route.ts   POST {scene} — validasi SceneSpec + terapkan ke dynamic.html
+    generate-scene/route.ts POST {prompt, provider, currentScene?} — AI -> SceneSpec + self-repair
+    generate-scene-stream/route.ts POST SSE — streaming token + partial + fallback non-stream
+    preview-scene/route.ts GET — serve dynamic.html untuk preview live (rewrite CDN -> /vendor/)
 lib/
   templates.ts             metadata 9 template (durasi, speaker, gaya caps/VO)
   cdn-rewrite.ts           rewrite 13 URL CDN three.js -> /vendor/ (PREVIEW saja; export tetap CDN)
-  spec.ts                  tipe Spec + validateSpec + parseTemplateHtml
+  spec.ts                  tipe Spec + validateSpec + parseTemplateHtml (+ extractPartialJsonFromText untuk streaming)
   apply-spec.ts            menempelkan Spec ke HTML (hanya title/caps/VO)
   skill.ts                 system prompt AI (ringkasan SKILL.md)
   canned.ts                spec contoh + revisi contoh (tes tanpa AI)
   provider.ts              localStorage provider (client saja)
-public/templates/          9 template HTML asli (disalin, tidak diubah)
+  scene-spec.ts            SceneSpec + kosakata engine + validasi (penuh + parsial) + blocklist kode custom
+  scene-prompt.ts          system prompt AI untuk SceneSpec (Bahasa Indonesia, tanpa karakter Cina)
+  apply-scene.ts           menempelkan SceneSpec ke dynamic.html (placeholder tepat 1x)
+  canned-scene.ts          SceneSpec contoh + revisi contoh + fixture custom beat terlarang
+  mine.ts                  "Video Buatan Saya" (localStorage claudeku.mine)
+public/templates/          9 template HTML asli (disalin, tidak diubah) + dynamic.html (renderer scene)
 public/vendor/             three.js r128 + 12 file postprocessing (13 file, 704K) — HANYA untuk preview
 scripts/
   lint_short.py            lint bawaan skill (credit, syntax, flicker, caption)
   export_mp4.py            render MP4 60fps via Playwright (mesin sendiri)
 docs/SKILL-RINGKAS.md      ringkasan SKILL.md v3.8
+docs/SCENE-ENGINE.md       kosakata mesin scene lengkap (pose/kamera/beat/props/monitor/palet/transisi)
 ```
 
 ## Cara kerja AI (penting)
