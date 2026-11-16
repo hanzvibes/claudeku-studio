@@ -26,6 +26,17 @@ function parseClock(text: string | null | undefined): number | null {
   return Number(m[1]) * 60 + Number(m[2]);
 }
 
+// Absolutkan URL root-relative (src="/...", href="/...", url(/...)) ke
+// origin yang diberikan. Dipakai sebelum HTML preview dimasukkan ke Blob:
+// dokumen blob: tidak bisa me-resolve URL root-relative (lihat useEffect
+// Blob URL di bawah). URL absolut (https://, //, data:, blob:, #) dan
+// URL relatif biasa (tanpa / di depan) tidak disentuh.
+function absolutizeUrlsForBlob(html: string, origin: string): string {
+  return html
+    .replace(/((?:src|href)=["'])\/([^/"'\s])/g, `$1${origin}/$2`)
+    .replace(/(url\(\s*["']?)\/([^/"'\s])/g, `$1${origin}/$2`);
+}
+
 export default function StudioPage() {
   const [templateId, setTemplateId] = useState("versus");
   const [spec, setSpec] = useState<Spec | null>(null);
@@ -95,12 +106,19 @@ export default function StudioPage() {
 
   // Blob URL untuk HTML hasil generate / apply — dari previewHtml (rewrite
   // /vendor/ lokal), BUKAN dari generatedHtml (CDN). Dicabut saat diganti.
+  //
+  // PENTING (bug preview hitam, 2026-11-16): URL relatif seperti
+  // src="/vendor/three.min.js" TIDAK bisa di-resolve dari dalam dokumen
+  // blob: URL — Chrome gagal memuatnya (THREE undefined → LEN undefined →
+  // preview hitam). Absolutkan dulu ke origin situs sebelum membuat Blob.
+  // generatedHtml (CDN, untuk Download) TIDAK disentuh.
   useEffect(() => {
     if (!previewHtml) {
       setBlobUrl(null);
       return;
     }
-    const url = URL.createObjectURL(new Blob([previewHtml], { type: "text/html" }));
+    const html = absolutizeUrlsForBlob(previewHtml, window.location.origin);
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     setBlobUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [previewHtml]);
