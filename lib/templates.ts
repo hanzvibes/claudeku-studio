@@ -1,4 +1,4 @@
-// Metadata 9 template threejs-cinematic-short v3.8.
+// Metadata 12 template threejs-cinematic-short v3.14.
 // Sumber kebenaran isi template ada di public/templates/*.html; data di sini
 // (durasi, speaker, gaya caps/VO) dibaca dari file aslinya dan diverifikasi
 // dengan scripts/lint_short.py — jangan ubah angka ini tanpa membaca ulang file.
@@ -113,6 +113,42 @@ export const TEMPLATES: TemplateMeta[] = [
     hasSpeakerField: true,
     voStyle: "explicit",
     description: "Maskot ketiduran di keyboard, bos datang membangunkan, lalu akhirnya kerja juga.",
+  },
+  {
+    id: "perang",
+    file: "template-perang.html",
+    title: "Perang Sub Agent",
+    duration: 34,
+    characters: 2,
+    speakers: ["Claude", "Codex", "Keduanya / Narator"],
+    hasSpeakerField: true,
+    voStyle: "explicit",
+    description:
+      "Perang sub agent: dua jenderal, pasukan mini, benteng kardus, ketapel koin token — twist: intern yang menyelesaikan tugas dalam sekali jalan. Judul layar: Claude vs Codex – Perang Sub Agent.",
+  },
+  {
+    id: "code",
+    file: "template-code.html",
+    title: "Adu Kode",
+    duration: 30,
+    characters: 2,
+    speakers: ["Claude", "Codex", "Keduanya / Narator"],
+    hasSpeakerField: true,
+    voStyle: "derived",
+    description:
+      "Duel kualitas kode: papan review 3 kriteria, layar editor vs terminal, keduanya gagal edge case null yang sama — lalu SERI dan PR digabung. Judul layar: Claude vs Codex — Adu Kode.",
+  },
+  {
+    id: "kuota",
+    file: "template-kuota.html",
+    title: "Rebutan Kuota",
+    duration: 34,
+    characters: 2,
+    speakers: ["Claude", "Codex", "Keduanya / Narator"],
+    hasSpeakerField: true,
+    voStyle: "explicit",
+    description:
+      "Rebutan kuota token bersama: tank kaca + papan menguras bareng, 429 KUOTA HABIS, mode hemat, kuota reset lalu kambuh lagi. Judul layar: Claude vs Codex – Rebutan Kuota.",
   },
 ];
 

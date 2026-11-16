@@ -1,7 +1,7 @@
 // Lint HTML template jalur "Skill penuh" — server-side.
 //
 // Jalur utama: scripts/lint_short.py (python3) — sumber kebenaran yang
-// sama dengan yang dipakai 9 template bawaan. Dijalankan lewat child
+// sama dengan yang dipakai 12 template bawaan. Dijalankan lewat child
 // process pada file sementara di /tmp (file user TIDAK PERNAH ditulis ke
 // repo). Bila python3 tidak tersedia (misal runtime Vercel), dipakai
 // fallback port TypeScript dari cek yang sama (cek error saja — warning
@@ -28,10 +28,62 @@ export type SkillLintResult = {
   warnings: string[];
   /** "python" bila lint_short.py yang jalan, "ts" bila fallback. */
   via: "python" | "ts";
+  /** true bila HTML mengandung prop-kit dan check_props.mjs ikut jalan. */
+  propsChecked: boolean;
 };
 
 /** Timeout lint python (lint menjalankan node --check di dalamnya). */
 const LINT_TIMEOUT_MS = 30000;
+
+/** Timeout check_props.mjs (600 sampel x 100 props, node murni). */
+const PROPS_TIMEOUT_MS = 60000;
+
+/**
+ * Deteksi prop-kit 100-prop (v3.10, template-code.html): entri
+ * ['001',lapis,x,y,z,w,h,d,0x..., 'resep',ry]. Ambang 10 entri supaya
+ * satu-dua kemiripan teks acak tidak memicu cek.
+ */
+const PROP_ENTRY_RE = /\['\d{3}',\d,-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+,0x[0-9a-fA-F]+,'[a-zA-Z]+',-?[\d.]+]/g;
+
+export function hasPropKit(html: string): boolean {
+  return (html.match(PROP_ENTRY_RE) || []).length >= 10;
+}
+
+/**
+ * Jalankan scripts/check_props.mjs pada HTML. Throw bila node/script
+ * gagal dijalankan (pemanggil mengubahnya jadi warning, bukan error keras
+ * — cek prop tambahan tidak boleh merusak alur lint yang sudah ada).
+ */
+async function checkPropsKit(html: string): Promise<{ errors: string[]; warnings: string[] }> {
+  const tmp = path.join(tmpdir(), `claudeku-props-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`);
+  await fs.writeFile(tmp, html, "utf-8");
+  try {
+    const { stdout } = await execFileAsync("node", [path.join(process.cwd(), "scripts", "check_props.mjs"), tmp], {
+      timeout: PROPS_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+    });
+    return parsePropsOutput(stdout);
+  } catch (e) {
+    const err = e as { stdout?: string; code?: number | string };
+    if (typeof err.stdout === "string" && err.stdout.length > 0) {
+      return parsePropsOutput(err.stdout);
+    }
+    throw e;
+  } finally {
+    await fs.unlink(tmp).catch(() => undefined);
+  }
+}
+
+/** Parse output check_props.mjs: baris "error: ..." / "warn : ...". */
+function parsePropsOutput(stdout: string): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("error: ")) errors.push("prop: " + line.slice("error: ".length));
+    else if (line.startsWith("warn : ")) warnings.push("prop: " + line.slice("warn : ".length));
+  }
+  return { errors, warnings };
+}
 
 /** Jalankan scripts/lint_short.py pada HTML. Throw bila python gagal dijalankan. */
 async function lintViaPython(html: string): Promise<{ errors: string[]; warnings: string[] }> {
@@ -124,15 +176,33 @@ async function checkLastInlineScriptSyntax(html: string): Promise<string[]> {
  * python3 tidak bisa dijalankan (ENOENT dsb.), fallback port TS +
  * node --check. Tidak pernah throw untuk HTML yang buruk — HTML buruk
  * dikembalikan sebagai errors, bukan exception.
+ *
+ * Cek TAMBAHAN (v3.14): bila HTML mengandung prop-kit 100-prop,
+ * scripts/check_props.mjs ikut dijalankan dan error-nya digabung ke
+ * errors (template ditolak / self-repair seperti error lint lain).
+ * Bila check_props tidak bisa dijalankan, hanya warning — alur lint
+ * yang sudah ada tidak pernah rusak karenanya.
  */
 export async function lintSkillHtml(html: string): Promise<SkillLintResult> {
+  let base: { errors: string[]; warnings: string[]; via: "python" | "ts" };
   try {
     const { errors, warnings } = await lintViaPython(html);
-    return { errors, warnings, via: "python" };
+    base = { errors, warnings, via: "python" };
   } catch {
     // python3 tidak tersedia / gagal dijalankan — fallback TS.
     const ts = lintViaTs(html);
     const syntaxErrors = await checkLastInlineScriptSyntax(html).catch(() => ["syntax check gagal dijalankan"]);
-    return { errors: [...ts.errors, ...syntaxErrors], warnings: ts.warnings, via: "ts" };
+    base = { errors: [...ts.errors, ...syntaxErrors], warnings: ts.warnings, via: "ts" };
+  }
+  if (!hasPropKit(html)) return { ...base, propsChecked: false };
+  try {
+    const props = await checkPropsKit(html);
+    return { errors: [...base.errors, ...props.errors], warnings: [...base.warnings, ...props.warnings], via: base.via, propsChecked: true };
+  } catch {
+    return {
+      ...base,
+      warnings: [...base.warnings, "check_props tidak bisa dijalankan — cek prop dilewati."],
+      propsChecked: false,
+    };
   }
 }

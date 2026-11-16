@@ -1,11 +1,11 @@
 // System prompt + user prompt untuk AI penulis template HTML (jalur
 // "Skill penuh"). AI menulis SATU FILE HTML LENGKAP mengikuti skill
-// threejs-cinematic-short v3.8 — BEBAS dari kosakata SceneSpec: adegan,
+// threejs-cinematic-short v3.14 — BEBAS dari kosakata SceneSpec: adegan,
 // kamera, pose, efek, props, dan isi monitor apa pun boleh, selama
 // mengikuti pola template trio di bawah.
 //
 // Sumber: ~/workspace/claudeku-short-gallery/threejs-cinematic-short/
-// SKILL.md (220 baris) + public/templates/template-trio.html (template
+// SKILL.md (246 baris) + public/templates/template-trio.html (template
 // paling up-to-date). Ringkasan di docs/SKILL-RINGKAS.md. JANGAN andalkan
 // ingatan model tentang skill ini — semua aturan inti ada di prompt ini.
 //
@@ -36,6 +36,20 @@ const SKILL_CORE = `Kamu menulis SATU FILE HTML lengkap: film pendek 3D sinemati
 (TikTok/Reels) berbahasa Indonesia, dirender live dengan three.js r128.
 JANGAN tulis dari nol: SALIN pola template trio di bawah, lalu ganti
 karakter, props, caption, dan palet sesuai ide pengguna.
+
+BASIS CERITA BARU v3.14 — pakai salah satu bila ide pengguna cocok
+(deskripsi singkat; detail pola ada di SKILL.md):
+- "Rebutan Kuota" (template-kuota.html, 34 dtk): komedi kuota token
+  bersama — tank kaca + papan dinding menguras bareng, 429 KUOTA HABIS
+  (sirene, monitor merah), mode hemat (satu kalimat, satu file), kuota
+  reset lalu kambuh lagi. IDEAL untuk ide soal usage limit / token habis.
+- "Adu Kode" (template-code.html, 30 dtk): duel kualitas kode — papan
+  review 3 kriteria (KEBERSIHAN / TES LULUS / PERFORMA), layar editor
+  vs terminal, keduanya gagal edge case null yang sama, lalu SERI +
+  PR digabung.
+- "Perang Sub Agent" (template-perang.html, 34 dtk): komedi perang sub
+  agent — dua jenderal, pasukan mini, benteng kardus, ketapel koin
+  token, twist: intern yang menyelesaikan tugas dalam sekali jalan.
 
 ATURAN ARSITEKTUR (wajib — ini yang membuat video jalan di Studio):
 - Semua gerak adalah fungsi murni dari waktu: frame(t) mengatur pose,

@@ -35,7 +35,7 @@ export function applySceneSpecToHtml(html: string, scene: SceneSpec): string {
  * HTML: canonical (CDN) + preview (rewrite /vendor lokal).
  * Throw bila template tidak ada, placeholder tidak tepat 1x, atau rewrite
  * CDN tidak mengganti tepat 13 script three.js (template dinamis wajib
- * memuat 13 URL CDN yang sama seperti 9 template bawaan).
+ * memuat 13 URL CDN yang sama seperti 12 template bawaan).
  */
 export async function buildSceneHtml(scene: SceneSpec): Promise<{ html: string; previewHtml: string }> {
   const template = await fs.readFile(

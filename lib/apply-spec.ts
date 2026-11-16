@@ -47,7 +47,7 @@ export function applySpecToHtml(html: string, spec: Spec): string {
   let out = html.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(spec.title)}</title>`);
 
   // 1b. Judul LAYAR — teks di dalam <div id="title"> (bukan cuma <title>).
-  //     Semua 9 template bawaan memakai pola yang sama:
+  //     Semua 12 template bawaan memakai pola yang sama:
   //     <div id="title"><svg class="st"></svg>TEKS<small>subjudul</small></div>
   //     TEKS boleh mengandung <br> (template trio). Subjudul <small> dibiarkan
   //     apa adanya (identitas template), hanya TEKS utama yang diganti dengan

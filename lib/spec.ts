@@ -222,8 +222,27 @@ function unescapeJsString(s: string): string {
   return s.replace(/\\'/g, "'").replace(/\\\\/g, "\\");
 }
 
+/** Satu shot kamera template: waktu mulai + posisi + titik lihat. */
+export type TemplateShot = {
+  start: number;
+  pos: [number, number, number];
+  look: [number, number, number];
+};
+
 /** Parse caps/VO/LEN/title dari HTML template asli. */
-export function parseTemplateHtml(html: string): { len: number; title: string; caps: Cap[]; vo: string[]; voDerived: boolean } {
+export function parseTemplateHtml(html: string): {
+  len: number;
+  title: string;
+  caps: Cap[];
+  vo: string[];
+  voDerived: boolean;
+  /** Daftar shot kamera (kosong bila template tidak punya `shots=`). */
+  shots: TemplateShot[];
+  /** Subjudul di <small> dalam #title ("" bila tidak ada). */
+  sub: string;
+  /** Teks end card di #end sebelum <small> ("" bila tidak ada). */
+  end: string;
+} {
   const lenMatch = html.match(/\bLEN\s*=\s*(\d*\.?\d+)/);
   if (!lenMatch) throw new Error("LEN tidak ditemukan di template.");
   const len = Number(lenMatch[1]);
@@ -254,5 +273,38 @@ export function parseTemplateHtml(html: string): { len: number; title: string; c
     }
   }
   if (vo.length !== caps.length) vo = caps.map((c) => c.text);
-  return { len, title, caps, vo, voDerived };
+  // Shot kamera (opsional): const shots=[[t0,[x,y,z],[x,y,z]],...]
+  const shots: TemplateShot[] = [];
+  const shotsArr = findBracketArray(html, "shots=");
+  if (shotsArr) {
+    const sre =
+      /\[(\d*\.?\d+),\[(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\],\[(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\]\]/g;
+    let sm: RegExpExecArray | null;
+    while ((sm = sre.exec(shotsArr.content)) !== null) {
+      shots.push({
+        start: Number(sm[1]),
+        pos: [Number(sm[2]), Number(sm[3]), Number(sm[4])],
+        look: [Number(sm[5]), Number(sm[6]), Number(sm[7])],
+      });
+    }
+  }
+  // Subjudul (#title small) + teks end card (#end, sebelum <small>).
+  // Keduanya bisa mengandung <br> di tengah ("Siapa<br>yang menang?"):
+  // <br> diubah jadi spasi (sub) / baris baru (end), JANGAN dipotong.
+  const subMatch = html.match(/<div id="title">[\s\S]*?<small>([\s\S]*?)<\/small>/);
+  const sub = subMatch
+    ? subMatch[1].replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
+    : "";
+  const endMatch = html.match(/<div id="end">([\s\S]*?)<small>/);
+  const end = endMatch
+    ? endMatch[1]
+        .replace(/<svg[\s\S]*?<\/svg>/g, "")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  return { len, title, caps, vo, voDerived, shots, sub, end };
 }

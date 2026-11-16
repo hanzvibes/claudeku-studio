@@ -69,7 +69,7 @@ const BLOCKED_PATTERNS: { re: RegExp; msg: string }[] = [
 /**
  * Validasi keamanan HTML template skill. Kembalikan daftar error
  * (kosong = lolos). Pemeriksaan berbasis pola teks — sengaja konservatif:
- * pola yang TIDAK ADA di 9 template bawaan langsung ditolak, jadi template
+ * pola yang TIDAK ADA di 12 template bawaan langsung ditolak, jadi template
  * hasil AI yang meniru pola trio akan lolos.
  */
 export function validateSkillHtml(html: string): string[] {
@@ -142,5 +142,46 @@ export function retitleSkillHtml(html: string, title: string): string {
     escapeHtmlText(title) +
     titleDiv[2] +
     out.slice(titleDiv.index + titleDiv[0].length);
+  return out;
+}
+
+/**
+ * Ganti teks HTML skill (tab Teks inspector): judul + subjudul + end card.
+ * Judul memakai retitleSkillHtml (ganti <title> DAN teks #title).
+ * Subjudul = isi <small> di #title; end card = teks di #end sebelum
+ * <small> (bintang svg dibiarkan). Field yang undefined dibiarkan.
+ * Throw bila pola yang diminta tidak ditemukan — pemanggil menampilkan
+ * pesan error, bukan menyimpan HTML setengah jadi.
+ */
+export function retextSkillHtml(html: string, texts: { title?: string; sub?: string; end?: string }): string {
+  let out = html;
+  if (texts.title !== undefined) out = retitleSkillHtml(out, texts.title);
+  if (texts.sub !== undefined) {
+    const subMatch = /(<div id="title">[\s\S]*?<small>)[\s\S]*?(<\/small><\/div>)/.exec(out);
+    if (!subMatch) throw new Error('Subjudul <small> di <div id="title"> tidak ditemukan di HTML.');
+    out =
+      out.slice(0, subMatch.index) +
+      subMatch[1] +
+      escapeHtmlText(texts.sub) +
+      subMatch[2] +
+      out.slice(subMatch.index + subMatch[0].length);
+  }
+  if (texts.end !== undefined) {
+    // Ganti SELURUH isi #end sebelum <small> (teks bisa multi-baris
+    // dengan <br> di tengah: "Siapa<br>yang menang?"). Bintang svg
+    // dibiarkan; baris baru teks baru jadi <br>.
+    const endDivMatch = /<div id="end">([\s\S]*?)<small>/.exec(out);
+    if (!endDivMatch) throw new Error('Teks end card <div id="end"> tidak ditemukan di HTML.');
+    const inner = endDivMatch[1];
+    const svgEnd = inner.lastIndexOf("</svg>");
+    const head = svgEnd >= 0 ? inner.slice(0, svgEnd + "</svg>".length) : "";
+    out =
+      out.slice(0, endDivMatch.index) +
+      '<div id="end">' +
+      head +
+      escapeHtmlText(texts.end).replace(/\n/g, "<br>") +
+      "<small>" +
+      out.slice(endDivMatch.index + endDivMatch[0].length);
+  }
   return out;
 }

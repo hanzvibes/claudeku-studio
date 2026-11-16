@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { TEMPLATES, getTemplate } from "@/lib/templates";
 import { CANNED_SPEC, cannedRevisionExample } from "@/lib/canned";
 import { CANNED_SCENE, cannedSceneRevision } from "@/lib/canned-scene";
@@ -27,6 +27,7 @@ import {
   extractSkillLen,
   extractSkillTitle,
   retitleSkillHtml,
+  retextSkillHtml,
   validateSkillHtml,
   type SkillVideo,
 } from "@/lib/skill-validate";
@@ -37,7 +38,30 @@ import {
   clearProvider,
   type ProviderConfig,
 } from "@/lib/provider";
-import { wordsPerSecond, MAX_WORDS_PER_SECOND, type Spec } from "@/lib/spec";
+import { wordsPerSecond, MAX_WORDS_PER_SECOND, parseTemplateHtml, type Spec, type TemplateShot } from "@/lib/spec";
+
+/** Baris inspector Shot: waktu mulai + label kamera. */
+type InspectorShot = { start: number; label: string };
+
+/** Info template aktif untuk inspector (shots + sub + end), dari /api/template atau HTML skill. */
+type TemplateInfo = { shots: InspectorShot[]; sub: string; end: string };
+
+/** Ambil shots/sub/end dari HTML template skill (gagal -> null, inspector menampilkan catatan). */
+function infoFromSkillHtml(html: string): TemplateInfo | null {
+  try {
+    const p = parseTemplateHtml(html);
+    return {
+      shots: p.shots.map((s: TemplateShot) => ({
+        start: s.start,
+        label: `cam ${s.pos.map((v) => v.toFixed(1)).join(", ")}`,
+      })),
+      sub: p.sub,
+      end: p.end,
+    };
+  } catch {
+    return null;
+  }
+}
 
 type Status = { kind: "ok" | "err" | "info"; text: string } | null;
 
@@ -143,6 +167,29 @@ export default function StudioPage() {
   // Preview lazy: iframe TIDAK di-load saat pertama buka — baru dimuat saat
   // pengguna memilih template / video buatan / menekan tombol muat. Lebih ringan.
   const [previewOn, setPreviewOn] = useState(false);
+
+  // --- Redesign layout (referensi studio/ pack v3.14) ---
+  // Drawer galeri kiri (tutup/buka; overlay + scrim di layar sempit).
+  const [drawerOpen, setDrawerOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 1180,
+  );
+  // Inspector kanan: tab Teks / Shot / Caption.
+  const [inspectorTab, setInspectorTab] = useState<"teks" | "shot" | "cap">("teks");
+  // Transport pill: loop on = video mengulang seperti template aslinya.
+  const [loop, setLoop] = useState(true);
+  const loopStopRef = useRef(false);
+  const prevTimeRef = useRef(0);
+  // Skeleton shimmer sampai iframe preview selesai load.
+  const [previewReady, setPreviewReady] = useState(false);
+  // Toast (cermin status, hilang sendiri).
+  const [toast, setToast] = useState<string | null>(null);
+  // Info template aktif untuk inspector (shots + sub + end).
+  const [templateInfo, setTemplateInfo] = useState<TemplateInfo | null>(null);
+  // Field tab Teks (judul/sub/end) — disinkronkan tiap ganti konten aktif.
+  const [teksTitle, setTeksTitle] = useState("");
+  const [teksSub, setTeksSub] = useState("");
+  const [teksEnd, setTeksEnd] = useState("");
+  const teksKeyRef = useRef("");
   // Streaming live saat AI generate scene: iframe memuat /api/preview-scene
   // (dokumen same-origin, spec default) dan menerima partial via postMessage.
   const [livePreview, setLivePreview] = useState(false);
@@ -205,6 +252,14 @@ export default function StudioPage() {
       setActiveMine(null);
       setMode("scene");
       setSpec({ templateId: id, title: data.title, caps: data.caps, vo: data.vo });
+      setTemplateInfo({
+        shots: (data.shots ?? []).map((s: TemplateShot) => ({
+          start: s.start,
+          label: `cam ${s.pos.map((v: number) => v.toFixed(1)).join(", ")}`,
+        })),
+        sub: data.sub ?? "",
+        end: data.end ?? "",
+      });
       setGeneratedHtml(null);
       setPreviewHtml(null);
       setBlobUrl(null);
@@ -242,6 +297,7 @@ export default function StudioPage() {
   // preview hitam). Absolutkan dulu ke origin situs sebelum membuat Blob.
   // generatedHtml (CDN, untuk Download) TIDAK disentuh.
   useEffect(() => {
+    setPreviewReady(false);
     if (!previewHtml) {
       setBlobUrl(null);
       return;
@@ -257,6 +313,71 @@ export default function StudioPage() {
     const el = streamTextRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [streamText]);
+
+  // Toast: cermin status terbaru, hilang sendiri sesudah ~2,6 dtk.
+  useEffect(() => {
+    if (!status) return;
+    setToast(status.text);
+    const t = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [status]);
+
+  // Esc menutup drawer (referensi studio/).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Info inspector untuk konten skill/scene (template bawaan dari /api/template).
+  useEffect(() => {
+    if (skill) {
+      setTemplateInfo(infoFromSkillHtml(skill.html));
+      return;
+    }
+    if (scene) {
+      setTemplateInfo({
+        shots: scene.shots.map((s) => ({
+          start: s.start,
+          label: `kamera ${s.camera}${s.focus !== undefined ? ` · fokus ${s.focus}` : ""}`,
+        })),
+        sub: "",
+        end: "",
+      });
+    }
+  }, [skill, scene]);
+
+  // Sinkronkan field tab Teks tiap konten aktif berganti (bukan tiap ketik).
+  useEffect(() => {
+    const key = skill
+      ? `skill:${skill.title}`
+      : scene
+        ? `scene:${scene.title}`
+        : spec
+          ? `spec:${spec.templateId}:${spec.title}`
+          : `tpl:${templateId}`;
+    if (key === teksKeyRef.current) return;
+    teksKeyRef.current = key;
+    setTeksTitle(previewTitle);
+    setTeksSub(templateInfo?.sub ?? "");
+    setTeksEnd(templateInfo?.end ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skill, scene, spec, templateId, templateInfo]);
+
+  // Loop off: begitu mencapai akhir (atau wrap ke 0), pause + tahan frame akhir.
+  useEffect(() => {
+    if (!loop && playing && !loopStopRef.current) {
+      if (currentTime >= duration - 0.35 || currentTime < prevTimeRef.current - 1) {
+        loopStopRef.current = true;
+        pause();
+        seek(duration - 0.01);
+      }
+    }
+    prevTimeRef.current = currentTime;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTime, loop, playing, duration]);
 
   // Poll waktu dari player di dalam iframe (#tc = jam berjalan template)
   // + baca #cbf (pesan kegagalan custom beat dari template dinamis).
@@ -284,6 +405,7 @@ export default function StudioPage() {
   const iframeDoc = () => iframeRef.current?.contentDocument ?? null;
 
   const seek = (t: number) => {
+    loopStopRef.current = false;
     const clamped = Math.min(Math.max(t, 0), duration - 0.01);
     setCurrentTime(clamped);
     try {
@@ -294,6 +416,7 @@ export default function StudioPage() {
   };
 
   const play = () => {
+    loopStopRef.current = false;
     const doc = iframeDoc();
     if (!doc) return;
     const go = doc.getElementById("go");
@@ -532,6 +655,37 @@ export default function StudioPage() {
       ? `${current.title.split("—")[0].trim()} — Revisi`
       : `${current.title} — Revisi`;
     return { title, html: retitleSkillHtml(current.html, title), duration: current.duration };
+  };
+
+  // --- Terapkan teks (tab Teks inspector) ---
+  // Skill/template (HTML aktif): judul + sub + end diganti di HTML lewat
+  // retextSkillHtml, lalu applySkill (revisi entri aktif / entri baru).
+  // Spec/scene: hanya judul yang bisa diganti (sub/end mengikuti template
+  // bawaan / renderer scene) — applySpec / applyScene dengan judul baru.
+  const applyTexts = () => {
+    const title = teksTitle.trim();
+    if (!title) {
+      setStatus({ kind: "err", text: "Judul tidak boleh kosong." });
+      return;
+    }
+    try {
+      if (skill) {
+        const html = retextSkillHtml(skill.html, { title, sub: teksSub, end: teksEnd });
+        applySkill({ title, html, duration: skill.duration }, "Menerapkan teks");
+        return;
+      }
+      if (spec) {
+        applySpec({ ...spec, title }, "Menerapkan teks");
+        return;
+      }
+      if (scene) {
+        applyScene({ ...scene, title }, "Menerapkan teks");
+        return;
+      }
+      setStatus({ kind: "err", text: "Belum ada video aktif — pilih template dulu." });
+    } catch (e) {
+      setStatus({ kind: "err", text: e instanceof Error ? e.message : "Gagal menerapkan teks." });
+    }
   };
 
   // --- Buka entri Video Buatan Saya ---
@@ -1160,23 +1314,32 @@ export default function StudioPage() {
   return (
     <>
       <header className="topbar">
+        <button className="icon-btn" onClick={() => setDrawerOpen(!drawerOpen)} aria-label="Buka atau tutup galeri" aria-expanded={drawerOpen}>
+          ☰
+        </button>
         <h1>🎬 Claudeku Studio</h1>
         <span className="sub">Short animasi Three.js 9:16 — pilih template, ketik ide, preview, export.</span>
         <div className="spacer" />
+        <span className="chip" title={previewTitle}>{previewTitle}</span>
         <button className="btn" onClick={() => setShowSettings(true)}>
           ⚙️ Settings Provider {providerSaved ? "✓" : "(belum diisi)"}
         </button>
       </header>
 
-      <main className="layout">
+      <main className={drawerOpen ? "layout" : "layout drawer-closed"}>
+        <div className={`scrim${drawerOpen ? " open" : ""}`} onClick={() => setDrawerOpen(false)} aria-hidden="true" />
         {/* Kolom kiri: galeri — Video Buatan Saya + Template Bawaan */}
-        <aside className="card">
+        <aside className={`card drawer${drawerOpen ? " open" : ""}`}>
           <h2>Video Buatan Saya {mine.length > 0 ? `(${mine.length})` : ""}</h2>
           {mine.length === 0 && (
             <p className="note">Belum ada. Hasil generate otomatis tersimpan di sini sebagai video baru — template bawaan tidak pernah ketimpa.</p>
           )}
-          {mine.map((entry) => (
-            <div key={entry.id} className={`gallery-item mine-item ${entry.id === activeMineId ? "active" : ""}`}>
+          {mine.map((entry, mi) => (
+            <div
+              key={entry.id}
+              className={`gallery-item mine-item ${entry.id === activeMineId ? "active" : ""}`}
+              style={{ "--i": mi } as CSSProperties}
+            >
               <button className="mine-open" onClick={() => openMineEntry(entry)}>
                 <b>{entry.title}</b>
                 <span>
@@ -1189,13 +1352,14 @@ export default function StudioPage() {
             </div>
           ))}
 
-          <h2 style={{ marginTop: 16 }}>Template Bawaan (9)</h2>
-          {TEMPLATES.map((t) => (
+          <h2 style={{ marginTop: 16 }}>Template Bawaan (12)</h2>
+          {TEMPLATES.map((t, ti) => (
             <button
               key={t.id}
               className={`gallery-item compact ${t.id === templateId && !scene && !skill ? "active" : ""}`}
               onClick={() => setTemplateId(t.id)}
               title={t.description}
+              style={{ "--i": ti } as CSSProperties}
             >
               <b>{t.title}</b>
               <span>
@@ -1203,7 +1367,7 @@ export default function StudioPage() {
               </span>
             </button>
           ))}
-          <p className="note">Template disalin apa adanya dari skill threejs-cinematic-short v3.8. Semua lolos lint_short.py. Template bawaan tidak pernah diubah oleh generate.</p>
+          <p className="note">Template disalin apa adanya dari skill threejs-cinematic-short v3.14. Semua lolos lint_short.py. Template bawaan tidak pernah diubah oleh generate.</p>
         </aside>
 
         {/* Tengah: preview + timeline */}
@@ -1226,6 +1390,7 @@ export default function StudioPage() {
                   allow="autoplay"
                   loading="lazy"
                   onLoad={() => {
+                    setPreviewReady(true);
                     // Partial yang datang sebelum iframe streaming selesai
                     // dimuat dikirim ulang sekarang (listener di dalam
                     // iframe baru terpasang sesudah load).
@@ -1242,28 +1407,44 @@ export default function StudioPage() {
                   }}
                 />
               )}
+              {previewOn && !previewReady && (
+                <div className="skeleton">Menyiapkan preview…</div>
+              )}
             </div>
-            <div className="timeline">
-              <button className="btn small" onClick={() => (playing ? pause() : play())} disabled={busy || !previewOn}>
-                {playing ? "⏸ Jeda" : "▶ Putar"}
+            <div className="player">
+              <button className="play" onClick={() => (playing ? pause() : play())} disabled={busy || !previewOn} aria-label={playing ? "Jeda" : "Putar"}>
+                {playing ? "❚❚" : "▶"}
               </button>
-              <input
-                type="range"
-                min={0}
-                max={duration}
-                step={0.1}
-                value={currentTime}
-                onChange={(e) => seek(Number(e.target.value))}
-                aria-label="Timeline"
-              />
+              <button className="player-btn" onClick={() => seek(Math.max(0, currentTime - 5))} disabled={!previewOn} aria-label="Mundur 5 detik">
+                −5s
+              </button>
+              <button className="player-btn" onClick={() => seek(Math.min(duration, currentTime + 5))} disabled={!previewOn} aria-label="Maju 5 detik">
+                +5s
+              </button>
+              <div className="seek">
+                <div className="seekfill">
+                  <i style={{ width: `${duration ? Math.min(100, (currentTime / duration) * 100) : 0}%` }} />
+                </div>
+                <input
+                  id="seek"
+                  type="range"
+                  min={0}
+                  max={duration}
+                  step={0.1}
+                  value={currentTime}
+                  onChange={(e) => seek(Number(e.target.value))}
+                  aria-label="Timeline"
+                />
+              </div>
               <span className="time">
                 {fmt(currentTime)} / {fmt(duration)}
               </span>
+              <label className="switch">
+                <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
+                loop
+              </label>
             </div>
             <div className="btnrow">
-              <button className="btn small" onClick={() => seek(0)} disabled={!previewOn}>⏮ Ulang dari awal</button>
-              <button className="btn small" onClick={() => seek(Math.max(0, currentTime - 5))} disabled={!previewOn}>−5 dtk</button>
-              <button className="btn small" onClick={() => seek(Math.min(duration, currentTime + 5))} disabled={!previewOn}>+5 dtk</button>
               <button className="btn small" onClick={downloadHtml}>⬇ Download HTML</button>
               {(prevSpec || prevScene || prevSkill) && (
                 <button className="btn small" onClick={undo} disabled={busy}>
@@ -1313,8 +1494,9 @@ export default function StudioPage() {
           </div>
         </section>
 
-        {/* Kanan: prompt + editor caption */}
-        <aside className="card">
+        {/* Kanan: prompt + inspector */}
+        <aside className="right-col">
+          <div className="card">
           <h2>Prompt AI</h2>
           <div className="mode-toggle" role="tablist" aria-label="Mode prompt">
             <button className={mode === "scene" ? "active" : ""} onClick={() => switchMode("scene")}>
@@ -1420,65 +1602,135 @@ export default function StudioPage() {
             {mode === "skill" && " Mode Skill menulis satu file HTML lengkap — lebih berat dari Scene; bila provider gagal, coba mode Scene."}
           </p>
 
-          <details className="more">
-            <summary>Editor Caption {spec ? `(${spec.caps.length} baris)` : ""}</summary>
-            {!spec && <p className="note">Editor caption hanya untuk video spec — pilih template bawaan atau buka video spec dari Video Buatan Saya. (Scene dan template skill direvisi lewat prompt.)</p>}
-            {spec?.caps.map((cap, i) => {
-              const wps = wordsPerSecond(cap);
-              return (
-                <div className="cap-row" key={i}>
-                  <div className="cap-meta">
-                    <label>
-                      Mulai{" "}
-                      <input
-                        type="number"
-                        step={0.1}
-                        min={0}
-                        max={duration}
-                        value={cap.start}
-                        onChange={(e) => updateCap(i, { start: Number(e.target.value) })}
-                      />
-                    </label>
-                    <label>
-                      Selesai{" "}
-                      <input
-                        type="number"
-                        step={0.1}
-                        min={0}
-                        max={duration}
-                        value={cap.end}
-                        onChange={(e) => updateCap(i, { end: Number(e.target.value) })}
-                      />
-                    </label>
-                    {meta.hasSpeakerField && (
-                      <select value={cap.speaker ?? 0} onChange={(e) => updateCap(i, { speaker: Number(e.target.value) })}>
-                        {meta.speakers.map((s, si) => (
-                          <option key={si} value={si}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <span className={`wps ${wps > MAX_WORDS_PER_SECOND ? "bad" : ""}`}>
-                      {wps.toFixed(1)} kata/dtk (maks {MAX_WORDS_PER_SECOND})
-                    </span>
-                  </div>
-                  <input
-                    type="text"
-                    value={cap.text}
-                    onChange={(e) => updateCap(i, { text: e.target.value })}
-                    aria-label={`Caption ${i + 1}`}
-                  />
-                </div>
-              );
-            })}
-            <div className="btnrow">
-              <button className="btn" disabled={busy || !spec} onClick={() => spec && applySpec(spec, "Menerapkan edit caption")}>
-                Terapkan Edit ke Preview
+          </div>
+
+          {/* Inspector: tab Teks / Shot / Caption (referensi studio/ pack v3.14). */}
+          <div className="card inspector">
+            <div className="tabs" role="tablist" aria-label="Inspector video">
+              <button className={inspectorTab === "teks" ? "tab on" : "tab"} role="tab" aria-selected={inspectorTab === "teks"} onClick={() => setInspectorTab("teks")}>
+                Teks
+              </button>
+              <button className={inspectorTab === "shot" ? "tab on" : "tab"} role="tab" aria-selected={inspectorTab === "shot"} onClick={() => setInspectorTab("shot")}>
+                Shot
+              </button>
+              <button className={inspectorTab === "cap" ? "tab on" : "tab"} role="tab" aria-selected={inspectorTab === "cap"} onClick={() => setInspectorTab("cap")}>
+                Caption
               </button>
             </div>
-            <p className="note">Edit di atas hanya mengubah teks/waktu/speaker caption. Layar monitor &amp; gerakan maskot tetap mengikuti template.</p>
-          </details>
+            <div className="panes">
+              {inspectorTab === "teks" && (
+                <div className="pane">
+                  <label className="field">
+                    <span>Judul</span>
+                    <input value={teksTitle} onChange={(e) => setTeksTitle(e.target.value)} placeholder="Judul video" />
+                  </label>
+                  <label className="field">
+                    <span>Subjudul</span>
+                    <input value={teksSub} onChange={(e) => setTeksSub(e.target.value)} placeholder="Subjudul di bawah judul" disabled={!skill} />
+                  </label>
+                  <label className="field">
+                    <span>End card</span>
+                    <textarea rows={2} value={teksEnd} onChange={(e) => setTeksEnd(e.target.value)} placeholder="Teks end card" disabled={!skill} />
+                  </label>
+                  {!skill && (
+                    <p className="hint">Subjudul &amp; end card hanya bisa diubah untuk video template/skill (HTML). Untuk video spec/scene, hanya judul yang diubah.</p>
+                  )}
+                  <div className="btnrow">
+                    <button className="btn primary" onClick={applyTexts} disabled={busy}>
+                      Terapkan teks
+                    </button>
+                  </div>
+                </div>
+              )}
+              {inspectorTab === "shot" && (
+                <div className="pane">
+                  {!templateInfo || templateInfo.shots.length === 0 ? (
+                    <p className="hint">Belum ada daftar shot untuk video ini.</p>
+                  ) : (
+                    <div className="rows">
+                      {templateInfo.shots.map((s, i) => (
+                        <button key={i} className="row" onClick={() => seek(s.start)}>
+                          <span className="k">{i + 1}</span>
+                          <span className="t">
+                            shot {s.start.toFixed(1)} dtk · {s.label}
+                          </span>
+                          <span className="at">{fmt(s.start)}</span>
+                          <span className="play-ico">▶</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="hint">Klik baris shot untuk lompat ke waktunya.</p>
+                </div>
+              )}
+              {inspectorTab === "cap" && (
+                <div className="pane">
+                  <p className="note" style={{ margin: 0 }}>
+                    Editor Caption {spec ? `(${spec.caps.length} baris)` : ""}
+                  </p>
+                  {!spec && <p className="note">Editor caption hanya untuk video spec — pilih template bawaan atau buka video spec dari Video Buatan Saya. (Scene dan template skill direvisi lewat prompt.)</p>}
+                  {spec?.caps.map((cap, i) => {
+                    const wps = wordsPerSecond(cap);
+                    return (
+                      <div className="cap-row" key={i}>
+                        <div className="cap-meta">
+                          <label>
+                            Mulai{" "}
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0}
+                              max={duration}
+                              value={cap.start}
+                              onChange={(e) => updateCap(i, { start: Number(e.target.value) })}
+                            />
+                          </label>
+                          <label>
+                            Selesai{" "}
+                            <input
+                              type="number"
+                              step={0.1}
+                              min={0}
+                              max={duration}
+                              value={cap.end}
+                              onChange={(e) => updateCap(i, { end: Number(e.target.value) })}
+                            />
+                          </label>
+                          {meta.hasSpeakerField && (
+                            <select value={cap.speaker ?? 0} onChange={(e) => updateCap(i, { speaker: Number(e.target.value) })}>
+                              {meta.speakers.map((s, si) => (
+                                <option key={si} value={si}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <button className="linklike" onClick={() => seek(cap.start)} aria-label={`Lompat ke ${fmt(cap.start)}`} title="Lompat ke waktu caption ini">
+                            ▶ {fmt(cap.start)}
+                          </button>
+                          <span className={`wps ${wps > MAX_WORDS_PER_SECOND ? "bad" : ""}`}>
+                            {wps.toFixed(1)} kata/dtk (maks {MAX_WORDS_PER_SECOND})
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          value={cap.text}
+                          onChange={(e) => updateCap(i, { text: e.target.value })}
+                          aria-label={`Caption ${i + 1}`}
+                        />
+                      </div>
+                    );
+                  })}
+                  <div className="btnrow">
+                    <button className="btn" disabled={busy || !spec} onClick={() => spec && applySpec(spec, "Menerapkan edit caption")}>
+                      Terapkan Edit ke Preview
+                    </button>
+                  </div>
+                  <p className="note">Edit di atas hanya mengubah teks/waktu/speaker caption. Layar monitor &amp; gerakan maskot tetap mengikuti template.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </aside>
       </main>
 
@@ -1541,6 +1793,13 @@ export default function StudioPage() {
               <button className="btn" onClick={() => setShowSettings(false)}>Tutup</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast: cermin status terbaru (referensi studio/). */}
+      {toast && (
+        <div className="toast on" role="status" aria-live="polite">
+          {toast}
         </div>
       )}
     </>

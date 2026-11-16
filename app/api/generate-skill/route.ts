@@ -1,6 +1,6 @@
 // POST /api/generate-skill { prompt, provider, currentHtml? }
 // Jalur "Skill penuh": AI menulis SATU FILE HTML template LENGKAP mengikuti
-// skill threejs-cinematic-short v3.8 — BEBAS dari kosakata SceneSpec.
+// skill threejs-cinematic-short v3.14 — BEBAS dari kosakata SceneSpec.
 // Streaming SSE seperti /api/generate-scene-stream (pola yang sama:
 // coba stream dulu, fallback non-streaming bila provider tidak dukung).
 //

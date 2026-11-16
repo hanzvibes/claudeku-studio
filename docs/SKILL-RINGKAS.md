@@ -1,7 +1,7 @@
-# Ringkasan SKILL.md — threejs-cinematic-short v3.8
+# Ringkasan SKILL.md — threejs-cinematic-short v3.14
 
 Sumber lengkap: `~/workspace/claudeku-short-gallery/threejs-cinematic-short/SKILL.md`
-(220 baris). File ini hanya ringkasan yang dipakai Studio untuk menyusun
+(246 baris). File ini hanya ringkasan yang dipakai Studio untuk menyusun
 system prompt AI — bukan pengganti SKILL.md.
 
 ## Produk
@@ -9,7 +9,7 @@ Satu file `.html` = satu film pendek 3D sinematik 9:16 (TikTok/Reels), dirender
 live dengan three.js. Jangan tulis dari nol: salin template, lalu ganti karakter,
 props, caption, dan palet.
 
-## 9 template (di `public/templates/`)
+## 12 template (di `public/templates/`)
 | Template | Durasi | Karakter | Cerita |
 |---|---|---|---|
 | template.html (versus) | 28 dtk | 2 | Claude vs Codex debat siapa paling jago |
@@ -21,6 +21,9 @@ props, caption, dan palet.
 | template-bomb.html | 33 dtk | 1 | Misi Mustahil: Merge Conflict, bom 30 detik |
 | template-meeting.html | 33 dtk | 1 | Rapat 5 Menit yang jadi hampir 4 jam |
 | template-sleep.html | 36 dtk | 1 | Ketiduran di keyboard, dibangunkan bos |
+| template-perang.html | 34 dtk | 2 | Perang Sub Agent: pasukan mini, benteng kardus, twist intern |
+| template-code.html | 30 dtk | 2 | Adu Kode: papan review 3 kriteria, edge case null, SERI + PR |
+| template-kuota.html | 34 dtk | 2 | Rebutan Kuota: tank + papan menguras, 429, mode hemat, reset |
 
 ## Arsitektur (yang dipakai Studio)
 - Semua gerak adalah fungsi murni dari waktu: `frame(t)` mengatur pose, cahaya,

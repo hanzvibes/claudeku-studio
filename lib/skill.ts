@@ -1,4 +1,4 @@
-// System prompt untuk AI — diringkas dari SKILL.md threejs-cinematic-short v3.8.
+// System prompt untuk AI — diringkas dari SKILL.md threejs-cinematic-short v3.14.
 // AI hanya diminta mengembalikan JSON Spec (lihat lib/spec.ts), bukan HTML.
 import type { TemplateMeta } from "./templates";
 import type { Spec } from "./spec";

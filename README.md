@@ -1,7 +1,7 @@
 # Claudeku Studio
 
 Studio web untuk membuat short animasi 3D 9:16 (TikTok/Reels/Shorts) dari
-template **threejs-cinematic-short v3.8** — galeri template, preview ala
+template **threejs-cinematic-short v3.14** — galeri template, preview ala
 Remotion, kotak prompt AI, dan editor caption. Bisa self-host (Docker/VPS)
 dan deploy Vercel.
 
@@ -18,7 +18,7 @@ npm start        # jalankan hasil build (port 3000)
 
 ## Cara memakai
 
-1. **Pilih template** di galeri kiri (9 template, 26–36 detik).
+1. **Pilih template** di galeri kiri (12 template, 26–36 detik).
 2. **Preview** di tengah: tombol Putar/Jeda, geser timeline untuk lompat ke
    detik tertentu, tombol −5/+5 dtk. Timeline memakai `window.renderAt(t)`
    bawaan template.
@@ -127,7 +127,7 @@ Selain generate berbasis template di atas, ada mode **“🎬 Scene baru”**:
   provider live pengguna belum terverifikasi (butuh kredensial pengguna).
 - **Video Buatan Saya:** setiap hasil generate (scene maupun template)
   OTOMATIS tersimpan sebagai entri baru di galeri (localStorage, key
-  `claudeku.mine`) — 9 template bawaan tidak pernah ditimpa. Entri bisa
+  `claudeku.mine`) — 12 template bawaan tidak pernah ditimpa. Entri bisa
   dibuka lagi, direvisi, dihapus, dan diekspor (Download HTML).
 
 ## Self-host (Docker)
@@ -162,7 +162,7 @@ app/
     generate-scene-stream/route.ts POST SSE — streaming token + partial + fallback non-stream
     preview-scene/route.ts GET — serve dynamic.html untuk preview live (rewrite CDN -> /vendor/)
 lib/
-  templates.ts             metadata 9 template (durasi, speaker, gaya caps/VO)
+  templates.ts             metadata 12 template (durasi, speaker, gaya caps/VO)
   cdn-rewrite.ts           rewrite 13 URL CDN three.js -> /vendor/ (PREVIEW saja; export tetap CDN)
   spec.ts                  tipe Spec + validateSpec + parseTemplateHtml (+ extractPartialJsonFromText untuk streaming)
   apply-spec.ts            menempelkan Spec ke HTML (hanya title/caps/VO)
@@ -174,12 +174,12 @@ lib/
   apply-scene.ts           menempelkan SceneSpec ke dynamic.html (placeholder tepat 1x)
   canned-scene.ts          SceneSpec contoh + revisi contoh + fixture custom beat terlarang
   mine.ts                  "Video Buatan Saya" (localStorage claudeku.mine)
-public/templates/          9 template HTML asli (disalin, tidak diubah) + dynamic.html (renderer scene)
+public/templates/          12 template HTML asli (disalin, tidak diubah) + dynamic.html (renderer scene)
 public/vendor/             three.js r128 + 12 file postprocessing (13 file, 704K) — HANYA untuk preview
 scripts/
   lint_short.py            lint bawaan skill (credit, syntax, flicker, caption)
   export_mp4.py            render MP4 60fps via Playwright (mesin sendiri)
-docs/SKILL-RINGKAS.md      ringkasan SKILL.md v3.8
+docs/SKILL-RINGKAS.md      ringkasan SKILL.md v3.14
 docs/SCENE-ENGINE.md       kosakata mesin scene lengkap (pose/kamera/beat/props/monitor/palet/transisi)
 ```
 
